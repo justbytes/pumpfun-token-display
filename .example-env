@@ -1,0 +1,5 @@
+HELIUS_RPC_URL=
+HELIUS_KEY=
+DATA_PATH=<only needed if you intend on saving/loading tokens and bonding curves from fs>
+
+MONGO_DB_URL=

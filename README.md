@@ -12,7 +12,13 @@ You will need a MongoDB URI along with a Helius RPC URL and API key. Get these a
 
 ### Install dependencies
 
-The project uses the pnpm package manager to handle installtion of packages:
+If you don't have `pnpm` installed run:
+
+```
+npm install -g pnpm
+```
+
+Then install packages with:
 
 ```
 pnpm install

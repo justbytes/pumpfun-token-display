@@ -709,15 +709,6 @@ async function main() {
     // Update the db with the new tokens created
     await fetcher.updateTokenList();
 
-    // Option 2: If you want to collect all bonding curves first (one-time setup)
-    // await fetcher.collectAndStoreBondingCurves();
-
-    // Option 3: Process specific addresses from an array
-    // const specificAddresses = ["address1", "address2", "address3"];
-    // await fetcher.processBondingCurvesToDatabase(specificAddresses);
-
-    // Option 4: Add a single token
-    // await fetcher.addSingleToken("specific_bonding_curve_address");
     process.exit(0);
   } catch (error) {
     console.error("❌ Error in main process:", error);
