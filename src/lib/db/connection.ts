@@ -1,7 +1,7 @@
-import { MongoClient, Db, Collection, ServerApi, ServerApiVersion, WithId } from 'mongodb';
-import { promises as fs } from 'fs';
-import dotenv from 'dotenv';
-import { Token } from '../types/types';
+import { MongoClient, Db, Collection, ServerApiVersion } from "mongodb";
+import { promises as fs } from "fs";
+import dotenv from "dotenv";
+import { Token } from "../types/types";
 
 dotenv.config();
 
@@ -43,7 +43,7 @@ export function getDbConnection(): Db {
   if (_client === null) {
     const mongoUrl = process.env.MONGO_DB_URL;
     if (!mongoUrl) {
-      throw new Error('MONGO_URL environment variable is not set');
+      throw new Error("MONGO_URL environment variable is not set");
     }
 
     _client = new MongoClient(mongoUrl, {
@@ -53,7 +53,7 @@ export function getDbConnection(): Db {
       },
     });
 
-    _db = _client.db('pumpfun-tokens');
+    _db = _client.db("pumpfun-tokens");
   }
 
   return _db!;
@@ -63,11 +63,11 @@ export function getDbConnection(): Db {
 export async function initializeDbConnection(): Promise<boolean> {
   try {
     const db = getDbConnection();
-    await _client!.db('admin').command({ ping: 1 });
-    console.log('✅ MongoDB connection established');
+    await _client!.db("admin").command({ ping: 1 });
+    console.log("✅ MongoDB connection established");
     return true;
   } catch (error) {
-    console.error('❌ MongoDB connection failed:', error);
+    console.error("❌ MongoDB connection failed:", error);
     return false;
   }
 }
@@ -80,10 +80,11 @@ export async function insertBondingCurvesBatch(addresses: string[]): Promise<{
 }> {
   try {
     const db = getDbConnection();
-    const collection: Collection<BondingCurveDocument> = db.collection('bonding-curves');
+    const collection: Collection<BondingCurveDocument> =
+      db.collection("bonding-curves");
 
     // Prepare documents for insertion
-    const documents: BondingCurveDocument[] = addresses.map(address => ({
+    const documents: BondingCurveDocument[] = addresses.map((address) => ({
       address,
     }));
 
@@ -99,11 +100,13 @@ export async function insertBondingCurvesBatch(addresses: string[]): Promise<{
     };
   } catch (error: any) {
     // Handle bulk write errors (like duplicates)
-    if (error.code === 11000 || error.name === 'MongoBulkWriteError') {
+    if (error.code === 11000 || error.name === "MongoBulkWriteError") {
       const inserted = error.result?.insertedCount || 0;
       const duplicates = addresses.length - inserted;
 
-      console.log(`✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`);
+      console.log(
+        `✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`
+      );
       return {
         inserted,
         duplicates,
@@ -128,10 +131,10 @@ export async function insertTokensBatch(tokens: Token[]): Promise<{
 }> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     // Convert Token[] to TokenDocument[] (handle Uint8Array -> number[] conversion)
-    const documents: TokenDocument[] = tokens.map(token => ({
+    const documents: TokenDocument[] = tokens.map((token) => ({
       bondingCurveAddress: token.bondingCurveAddress,
       tokenAddress: token.tokenAddress,
       bondingCurveData: {
@@ -159,11 +162,13 @@ export async function insertTokensBatch(tokens: Token[]): Promise<{
     };
   } catch (error: any) {
     // Handle bulk write errors (like duplicates)
-    if (error.code === 11000 || error.name === 'MongoBulkWriteError') {
+    if (error.code === 11000 || error.name === "MongoBulkWriteError") {
       const inserted = error.result?.insertedCount || 0;
       const duplicates = tokens.length - inserted;
 
-      console.log(`✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`);
+      console.log(
+        `✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`
+      );
       return {
         inserted,
         duplicates,
@@ -181,7 +186,9 @@ export async function insertTokensBatch(tokens: Token[]): Promise<{
 }
 
 // Load addresses from JSON file and insert into database
-export async function loadBondingCurveAddressesFromFile(filePath: string): Promise<{
+export async function loadBondingCurveAddressesFromFile(
+  filePath: string
+): Promise<{
   total: number;
   inserted: number;
   duplicates: number;
@@ -190,7 +197,7 @@ export async function loadBondingCurveAddressesFromFile(filePath: string): Promi
   try {
     console.log(`📂 Loading addresses from ${filePath}...`);
 
-    const fileContent = await fs.readFile(filePath, 'utf8');
+    const fileContent = await fs.readFile(filePath, "utf8");
     const addresses: string[] = JSON.parse(fileContent);
 
     console.log(`📊 Found ${addresses.length} addresses in file`);
@@ -215,7 +222,7 @@ export async function loadBondingCurveAddressesFromFile(filePath: string): Promi
       totalErrors += result.errors;
 
       // Small delay to prevent overwhelming the database
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     return {
@@ -240,7 +247,7 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
   try {
     console.log(`📂 Loading tokens from ${filePath}...`);
 
-    const fileContent = await fs.readFile(filePath, 'utf8');
+    const fileContent = await fs.readFile(filePath, "utf8");
     const tokens: Token[] = JSON.parse(fileContent);
 
     console.log(`📊 Found ${tokens.length} tokens in file`);
@@ -265,7 +272,7 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
       totalErrors += result.errors;
 
       // Small delay to prevent overwhelming the database
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
 
     return {
@@ -284,7 +291,8 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
 export async function getAllBondingCurveAddresses(): Promise<string[]> {
   try {
     const db = getDbConnection();
-    const collection: Collection<BondingCurveDocument> = db.collection('bonding-curves');
+    const collection: Collection<BondingCurveDocument> =
+      db.collection("bonding-curves");
 
     // Only return the address field, exclude _id
     const documents = await collection
@@ -296,7 +304,7 @@ export async function getAllBondingCurveAddresses(): Promise<string[]> {
       )
       .toArray();
 
-    return documents.map(doc => doc.address);
+    return documents.map((doc) => doc.address);
   } catch (error) {
     console.error(`❌ Error getting bonding curve addresses: ${error}`);
     return [];
@@ -304,10 +312,13 @@ export async function getAllBondingCurveAddresses(): Promise<string[]> {
 }
 
 // Add a single bonding curve
-export async function insertBondingCurve(bondingCurve: string): Promise<boolean> {
+export async function insertBondingCurve(
+  bondingCurve: string
+): Promise<boolean> {
   try {
     const db = getDbConnection();
-    const collection: Collection<BondingCurveDocument> = db.collection('bonding-curves');
+    const collection: Collection<BondingCurveDocument> =
+      db.collection("bonding-curves");
 
     const result = await collection.insertOne({
       address: bondingCurve,
@@ -333,16 +344,16 @@ export async function getAllTokens(filter?: {
 }): Promise<TokenDocument[]> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     let query: any = {};
 
     // Build query based on filters
     if (filter?.name) {
-      query['tokenData.name'] = { $regex: filter.name, $options: 'i' }; // Case insensitive search
+      query["tokenData.name"] = { $regex: filter.name, $options: "i" }; // Case insensitive search
     }
     if (filter?.symbol) {
-      query['tokenData.symbol'] = { $regex: filter.symbol, $options: 'i' };
+      query["tokenData.symbol"] = { $regex: filter.symbol, $options: "i" };
     }
 
     let cursor = collection.find(query);
@@ -359,12 +370,14 @@ export async function getAllTokens(filter?: {
 }
 
 // Get token by mint address
-export async function getTokenByMint(mint: string): Promise<TokenDocument | null> {
+export async function getTokenByMint(
+  mint: string
+): Promise<TokenDocument | null> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
-    return await collection.findOne({ 'tokenData.mint': mint });
+    return await collection.findOne({ "tokenData.mint": mint });
   } catch (error) {
     console.error(`❌ Error getting token by mint: ${error}`);
     return null;
@@ -377,7 +390,7 @@ export async function getTokenByBondingCurve(
 ): Promise<TokenDocument | null> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     return await collection.findOne({ bondingCurveAddress });
   } catch (error) {
@@ -390,7 +403,7 @@ export async function getTokenByBondingCurve(
 export async function insertToken(token: Token): Promise<boolean> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     // Convert Token to TokenDocument
     const document: TokenDocument = {
@@ -426,7 +439,8 @@ export async function insertToken(token: Token): Promise<boolean> {
 export async function getDatabaseStats(): Promise<number | null> {
   try {
     const db = getDbConnection();
-    const collection: Collection<BondingCurveDocument> = db.collection('bonding-curves');
+    const collection: Collection<BondingCurveDocument> =
+      db.collection("bonding-curves");
 
     const [total] = await Promise.all([collection.countDocuments({})]);
 
@@ -445,11 +459,11 @@ export async function getTokenStats(): Promise<{
 } | null> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     const [totalTokens, completedBondingCurves] = await Promise.all([
       collection.countDocuments({}),
-      collection.countDocuments({ 'bondingCurveData.complete': true }),
+      collection.countDocuments({ "bondingCurveData.complete": true }),
     ]);
 
     return {
@@ -467,12 +481,13 @@ export async function getTokenStats(): Promise<{
 export async function createIndexes(): Promise<boolean> {
   try {
     const db = getDbConnection();
-    const collection: Collection<BondingCurveDocument> = db.collection('bonding-curves');
+    const collection: Collection<BondingCurveDocument> =
+      db.collection("bonding-curves");
 
     // Create unique index on address to prevent duplicates
     await collection.createIndex({ address: 1 }, { unique: true });
 
-    console.log('✅ Database indexes created successfully');
+    console.log("✅ Database indexes created successfully");
     return true;
   } catch (error) {
     console.error(`❌ Error creating indexes: ${error}`);
@@ -484,7 +499,7 @@ export async function createIndexes(): Promise<boolean> {
 export async function createTokenIndexes(): Promise<boolean> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     // Create indexes for efficient queries
     await Promise.all([
@@ -495,34 +510,34 @@ export async function createTokenIndexes(): Promise<boolean> {
       collection.createIndex({ bondingCurveAddress: 1 }, { unique: true }),
 
       // Index on mint for fast lookups
-      collection.createIndex({ 'tokenData.mint': 1 }),
+      collection.createIndex({ "tokenData.mint": 1 }),
 
       // Text index for searching name and symbol
       collection.createIndex(
         {
-          'tokenData.name': 'text',
-          'tokenData.symbol': 'text',
+          "tokenData.name": "text",
+          "tokenData.symbol": "text",
         },
         {
-          name: 'token_search_index',
+          name: "token_search_index",
           weights: {
-            'tokenData.name': 10,
-            'tokenData.symbol': 5,
+            "tokenData.name": 10,
+            "tokenData.symbol": 5,
           },
         }
       ),
 
       // Index on bonding curve complete status
-      collection.createIndex({ 'bondingCurveData.complete': 1 }),
+      collection.createIndex({ "bondingCurveData.complete": 1 }),
 
       // Compound index for common queries
       collection.createIndex({
-        'tokenData.symbol': 1,
-        'bondingCurveData.complete': 1,
+        "tokenData.symbol": 1,
+        "bondingCurveData.complete": 1,
       }),
     ]);
 
-    console.log('✅ Token collection indexes created successfully');
+    console.log("✅ Token collection indexes created successfully");
     return true;
   } catch (error) {
     console.error(`❌ Error creating token indexes: ${error}`);
@@ -537,14 +552,14 @@ export async function searchTokens(
 ): Promise<TokenDocument[]> {
   try {
     const db = getDbConnection();
-    const collection: Collection<TokenDocument> = db.collection('tokens');
+    const collection: Collection<TokenDocument> = db.collection("tokens");
 
     // Search in both name and symbol fields
     const tokens = await collection
       .find({
         $or: [
-          { 'tokenData.name': { $regex: searchTerm, $options: 'i' } },
-          { 'tokenData.symbol': { $regex: searchTerm, $options: 'i' } },
+          { "tokenData.name": { $regex: searchTerm, $options: "i" } },
+          { "tokenData.symbol": { $regex: searchTerm, $options: "i" } },
         ],
       })
       .limit(limit)
@@ -558,44 +573,44 @@ export async function searchTokens(
 }
 
 async function loadBondingCurveAddressesToDatabase() {
-  console.log('🚀 Starting address loading process...');
+  console.log("🚀 Starting address loading process...");
 
   try {
     // Initialize database connection
     const connected = await initializeDbConnection();
     if (!connected) {
-      throw new Error('Failed to connect to MongoDB');
+      throw new Error("Failed to connect to MongoDB");
     }
 
     // Create indexes (run this once, or it will skip if indexes already exist)
-    console.log('📝 Creating database indexes...');
+    console.log("📝 Creating database indexes...");
     await createIndexes();
 
     // Get current database stats
-    console.log('📊 Current database stats:');
+    console.log("📊 Current database stats:");
     const statsBefore = await getDatabaseStats();
     console.log(`   Total addresses: ${statsBefore}`);
 
     // Load addresses from your JSON file
-    const JSON_FILE_PATH =
-      '/Users/xtox/Coding/pumpfun-token-display/src/lib/data/bonding_addresses.json'; // Update this path
 
-    console.log('\n🔄 Loading addresses from file...');
+    const JSON_FILE_PATH = `${process.env.DATA_PATH}/bonding_addresses.json`;
+
+    console.log("\n🔄 Loading addresses from file...");
     const result = await loadBondingCurveAddressesFromFile(JSON_FILE_PATH);
 
     // Show results
-    console.log('\n✅ Loading completed!');
+    console.log("\n✅ Loading completed!");
     console.log(`   Total addresses in file: ${result.total}`);
     console.log(`   Successfully inserted: ${result.inserted}`);
     console.log(`   Duplicates skipped: ${result.duplicates}`);
     console.log(`   Errors: ${result.errors}`);
 
     // Get updated database stats
-    console.log('\n📊 Updated database stats:');
+    console.log("\n📊 Updated database stats:");
     const statsAfter = await getDatabaseStats();
     console.log(`   Total addresses: ${statsAfter}`);
   } catch (error) {
-    console.error('❌ Error during loading process:', error);
+    console.error("❌ Error during loading process:", error);
     process.exit(1);
   } finally {
     // Close the connection
@@ -604,24 +619,24 @@ async function loadBondingCurveAddressesToDatabase() {
 }
 // Function to load token list to database
 async function loadTokenListToDatabase() {
-  console.log('🚀 Starting token loading process...');
+  console.log("🚀 Starting token loading process...");
 
   try {
     // Initialize database connection
     const connected = await initializeDbConnection();
     if (!connected) {
-      throw new Error('Failed to connect to MongoDB');
+      throw new Error("Failed to connect to MongoDB");
     }
 
     // Create indexes for both collections
-    console.log('📝 Creating database indexes...');
+    console.log("📝 Creating database indexes...");
     await Promise.all([
       createIndexes(), // Bonding curve indexes
       createTokenIndexes(), // Token indexes
     ]);
 
     // Get current database stats
-    console.log('📊 Current database stats:');
+    console.log("📊 Current database stats:");
     const [bondingCurveStats, tokenStats] = await Promise.all([
       getDatabaseStats(),
       getTokenStats(),
@@ -629,31 +644,40 @@ async function loadTokenListToDatabase() {
 
     console.log(`   Bonding curve addresses: ${bondingCurveStats}`);
     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
-    console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
-    console.log(`   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`);
+    console.log(
+      `   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`
+    );
+    console.log(
+      `   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`
+    );
 
     // Load tokens from your JSON file
-    const JSON_FILE_PATH =
-      '/Users/xtox/Coding/pumpfun-token-display/src/lib/data/pumpfun_token_list.json';
+    const JSON_FILE_PATH = `${process.env.DATA_PATH}/pumpfun_token_list.json`;
 
-    console.log('\n🔄 Loading tokens from file...');
+    console.log("\n🔄 Loading tokens from file...");
     const result = await loadTokenListFromFile(JSON_FILE_PATH);
 
     // Show results
-    console.log('\n✅ Loading completed!');
+    console.log("\n✅ Loading completed!");
     console.log(`   Total tokens in file: ${result.total}`);
     console.log(`   Successfully inserted: ${result.inserted}`);
     console.log(`   Duplicates skipped: ${result.duplicates}`);
     console.log(`   Errors: ${result.errors}`);
 
     // Get updated database stats
-    console.log('\n📊 Updated database stats:');
+    console.log("\n📊 Updated database stats:");
     const updatedTokenStats = await getTokenStats();
     console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
-    console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
-    console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);
+    console.log(
+      `   Completed bonding curves: ${
+        updatedTokenStats?.completedBondingCurves || 0
+      }`
+    );
+    console.log(
+      `   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`
+    );
   } catch (error) {
-    console.error('❌ Error during loading process:', error);
+    console.error("❌ Error during loading process:", error);
     process.exit(1);
   } finally {
     // Close the connection
@@ -665,5 +689,5 @@ async function loadTokenListToDatabase() {
 }
 
 // loadTokenListToDatabase();
-createTokenIndexes();
+// createTokenIndexes();
 //loadBondingCurveAddressesToDatabase();
