@@ -2,6 +2,7 @@
   "name": "pumpfun-token-display",
   "version": "0.1.0",
   "description": "Severless indexer for pumpfun tokens",
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
