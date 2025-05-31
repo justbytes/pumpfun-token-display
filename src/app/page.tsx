@@ -85,10 +85,10 @@ export default function Home() {
     const searchLower = searchTerm.toLowerCase();
     return allTokens.filter(
       (token) =>
-        token.tokenData.name.toLowerCase().includes(searchLower) ||
-        token.tokenData.symbol.toLowerCase().includes(searchLower) ||
-        token.tokenData.description.toLowerCase().includes(searchLower) ||
-        token.tokenData.mint.toLowerCase().includes(searchLower)
+        token.tokenData.name?.toLowerCase().includes(searchLower) ||
+        token.tokenData.symbol?.toLowerCase().includes(searchLower) ||
+        token.tokenData.description?.toLowerCase().includes(searchLower) ||
+        token.tokenData.mint?.toLowerCase().includes(searchLower)
     );
   }, [allTokens, searchTerm]);
 

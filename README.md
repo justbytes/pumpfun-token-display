@@ -1,6 +1,6 @@
 # Pumpfun Token Display
 
-A custom real-tim pumpfun token indexer leveraging Helius, Next.js, React, and MongoDB.
+A custom real-time pumpfun token indexer leveraging Helius, Next.js, React, and MongoDB.
 
 ## Steps to run locally
 
@@ -42,7 +42,7 @@ async function main() {
   );
 
   try {
-
+    // Get all of the bonding curves
     await fetcher.collectAndStoreBondingCurves();
 
     // Or Process specific addresses from an array
