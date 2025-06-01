@@ -5,10 +5,10 @@ import { BorshCoder } from '@coral-xyz/anchor';
 const fs = require('fs');
 const path = require('path');
 import dotenv from 'dotenv';
-import { bondingCurveSchema } from './PumpfunTokenFetcher';
+
 import { Token, TokenMetadata } from '../types/types';
 import { insertToken } from '../db/mongoDB';
-import { insertTokenToSQLite, initializeSQLiteDB } from '../db/sql';
+import { insertTokenToSQL, initializeSQLDB } from '../db/sql';
 
 dotenv.config();
 
@@ -29,7 +29,7 @@ class PumpFunEventListener {
    */
   constructor(idl: any) {
     // Create the connection
-    this.connection = new Connection(`${process.env.HELIUS_API_URL}`, {
+    this.connection = new Connection(`${process.env.HELIUS_RPC_URL}`, {
       commitment: 'confirmed',
     });
     // Decode the pumpfun idl
@@ -41,12 +41,64 @@ class PumpFunEventListener {
   }
 
   /**
+   * Helper function to safely convert Solana/Anchor data types to strings
+   */
+  private safeStringify(value: any): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (typeof value === 'number' || typeof value === 'bigint') {
+      return String(value);
+    }
+
+    // Handle PublicKey objects
+    if (value && typeof value === 'object' && value.toString) {
+      try {
+        return value.toString();
+      } catch (error) {
+        console.warn('Failed to convert object to string:', error);
+        return '';
+      }
+    }
+
+    // Handle buffers
+    if (Buffer.isBuffer(value)) {
+      return value.toString('base64');
+    }
+
+    // Handle arrays
+    if (Array.isArray(value)) {
+      try {
+        return JSON.stringify(value);
+      } catch (error) {
+        return '';
+      }
+    }
+
+    // Handle any other object
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value);
+      } catch (error) {
+        return String(value);
+      }
+    }
+
+    return String(value);
+  }
+
+  /**
    * Initialize SQLite database
    */
   private async initializeSQLite(): Promise<void> {
     if (this.sqliteInitialized) return;
 
-    const initialized = await initializeSQLiteDB();
+    const initialized = await initializeSQLDB();
     if (!initialized) {
       throw new Error('Failed to initialize SQLite database');
     }
@@ -218,29 +270,46 @@ class PumpFunEventListener {
 
     console.log(`\n🚀 New token created: ${name} (${symbol})`);
 
-    const uriMeta = await this.getTokenMetadataFromUri(uri);
+    // Convert all Solana/Anchor types to safe strings
+    const safeTokenData = {
+      name: this.safeStringify(name),
+      symbol: this.safeStringify(symbol),
+      uri: this.safeStringify(uri),
+      mint: this.safeStringify(mint),
+      bonding_curve: this.safeStringify(bonding_curve),
+      creator: this.safeStringify(creator),
+    };
 
-    if (!uriMeta) {
-      console.log("❌ Couldn't get metadata from the new token uri!");
-      return;
+    console.log('🔧 Converted token data:', {
+      name: safeTokenData.name,
+      symbol: safeTokenData.symbol,
+      tokenAddress: safeTokenData.mint,
+      bondingCurveAddress: safeTokenData.bonding_curve,
+    });
+
+    // Get metadata (only if URI is valid)
+    let uriMeta = null;
+    if (safeTokenData.uri && safeTokenData.uri.trim() !== '') {
+      uriMeta = await this.getTokenMetadataFromUri(safeTokenData.uri);
     }
 
+    // Create token document with safe string values
     const tokenDocument = {
-      bondingCurveAddress: bonding_curve,
+      bondingCurveAddress: safeTokenData.bonding_curve,
       complete: false,
-      creator,
-      tokenAddress: mint,
-      name,
-      symbol,
-      uri,
-      description: uriMeta.description,
-      image: uriMeta.image,
+      creator: safeTokenData.creator,
+      tokenAddress: safeTokenData.mint,
+      name: safeTokenData.name,
+      symbol: safeTokenData.symbol,
+      uri: safeTokenData.uri,
+      description: uriMeta?.description || '',
+      image: uriMeta?.image || '',
     };
 
     try {
       // 1. Immediately write to SQLite for fast access
       console.log('💾 Writing token to SQLite...');
-      const sqliteSuccess = await insertTokenToSQLite(tokenDocument);
+      const sqliteSuccess = await insertTokenToSQL(tokenDocument);
 
       if (sqliteSuccess) {
         console.log('✅ Token successfully written to SQLite');
@@ -250,12 +319,13 @@ class PumpFunEventListener {
         console.log(`📝 Token queued for MongoDB (queue size: ${this.mongoQueue.length})`);
 
         // 3. Track new token
-        this.newTokens.push(mint);
+        this.newTokens.push(safeTokenData.mint);
       } else {
         console.error('❌ Failed to write token to SQLite');
       }
     } catch (error) {
       console.error('❌ Error processing new token:', error);
+      console.error('Token data that caused error:', tokenDocument);
     }
   }
 
@@ -422,7 +492,4 @@ export const startCreateEventListener = async () => {
 // Export the listener class
 export { PumpFunEventListener };
 
-// Auto-start if this file is run directly
-if (require.main === module) {
-  startCreateEventListener().catch(console.error);
-}
+startCreateEventListener().catch(console.error);

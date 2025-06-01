@@ -1,15 +1,10 @@
-// src/lib/utils/dataSyncUtility.ts - SIMPLIFIED VERSION
+// src/lib/utils/dataSyncUtility.ts - Updated for better-sqlite3
 import {
   getAllTokens,
   initializeDbConnection as initMongoDB,
   getTokenStats as getMongoStats,
 } from '../db/mongoDB';
-import {
-  initializeSQLiteDB,
-  insertTokensBatchToSQLite,
-  sqliteDB,
-  getTokenStatsFromSQLite,
-} from '../db/sql';
+import { initializeSQLDB, insertTokensBatchToSQL, sqlDB, getTokenStatsFromSQL } from '../db/sql';
 
 interface SyncResult {
   success: boolean;
@@ -94,10 +89,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
     // Initialize both databases
     console.log('🔌 Initializing database connections...');
 
-    const [mongoConnected, sqliteConnected] = await Promise.all([
-      initMongoDB(),
-      initializeSQLiteDB(),
-    ]);
+    const [mongoConnected, sqliteConnected] = await Promise.all([initMongoDB(), initializeSQLDB()]);
 
     if (!mongoConnected) {
       throw new Error('Failed to connect to MongoDB');
@@ -108,7 +100,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
     }
 
     // Get current SQLite stats
-    const sqliteStatsBefore = await getTokenStatsFromSQLite();
+    const sqliteStatsBefore = await getTokenStatsFromSQL();
     result.sqliteTokensBefore = sqliteStatsBefore?.totalTokens || 0;
 
     console.log(`📊 Current SQLite tokens: ${result.sqliteTokensBefore}`);
@@ -148,7 +140,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
       console.log(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} tokens)`);
 
       try {
-        const batchResult = await insertTokensBatchToSQLite(batch);
+        const batchResult = await insertTokensBatchToSQL(batch);
         totalInserted += batchResult.inserted;
         totalDuplicates += batchResult.duplicates;
         totalErrors += batchResult.errors;
@@ -172,7 +164,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
     result.errors = totalErrors;
 
     // Get final SQLite stats
-    const sqliteStatsAfter = await getTokenStatsFromSQLite();
+    const sqliteStatsAfter = await getTokenStatsFromSQL();
     result.sqliteTokensAfter = sqliteStatsAfter?.totalTokens || 0;
 
     result.success = true;
@@ -208,13 +200,10 @@ export async function checkSyncStatus(): Promise<{
 }> {
   try {
     // Initialize connections
-    await Promise.all([initMongoDB(), initializeSQLiteDB()]);
+    await Promise.all([initMongoDB(), initializeSQLDB()]);
 
     // Get stats from both databases
-    const [mongoStats, sqliteStats] = await Promise.all([
-      getMongoStats(),
-      getTokenStatsFromSQLite(),
-    ]);
+    const [mongoStats, sqliteStats] = await Promise.all([getMongoStats(), getTokenStatsFromSQL()]);
 
     const mongoTokens = mongoStats?.totalTokens || 0;
     const sqliteTokens = sqliteStats?.totalTokens || 0;
@@ -286,4 +275,5 @@ async function main(command: string) {
     process.exit(1);
   }
 }
-main('status');
+
+main('sync');

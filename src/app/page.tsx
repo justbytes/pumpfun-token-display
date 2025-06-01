@@ -46,45 +46,128 @@ export default function Home() {
   const [lastPollTime, setLastPollTime] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<'sqlite' | 'mongodb'>('sqlite');
 
+  // New refresh-related state
+  const [showNewTokenBanner, setShowNewTokenBanner] = useState(false);
+  const [pendingRefresh, setPendingRefresh] = useState(false);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
+
   // Refs for polling
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isComponentMountedRef = useRef(true);
+  const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const TOKENS_PER_PAGE = 50;
-  const POLLING_INTERVAL = 5000; // 5 seconds
-
-  // Add new token to the list
-  const addNewToken = useCallback((newToken: Token) => {
-    setAllTokens(prevTokens => {
-      // Check if token already exists to avoid duplicates
-      const tokenExists = prevTokens.some(token => token.tokenAddress === newToken.tokenAddress);
-
-      if (!tokenExists) {
-        setNewTokensCount(prev => prev + 1);
-        // Add new token to the beginning of the list
-        return [newToken, ...prevTokens];
-      }
-
-      return prevTokens;
-    });
-  }, []);
+  const POLLING_INTERVAL = 1000; // 1 second for better-sqlite3 (much faster)
+  const AUTO_REFRESH_DELAY = 3000; // 3 seconds before auto-refreshing
+  const NEW_TOKEN_THRESHOLD = 5; // Show banner after 5 new tokens
 
   // Add multiple new tokens
-  const addNewTokens = useCallback((newTokens: Token[]) => {
-    if (newTokens.length === 0) return;
+  const addNewTokens = useCallback(
+    (newTokens: Token[]) => {
+      if (newTokens.length === 0) return;
 
-    setAllTokens(prevTokens => {
-      const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
-      const uniqueNewTokens = newTokens.filter(token => !existingAddresses.has(token.tokenAddress));
+      setAllTokens(prevTokens => {
+        const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
+        const uniqueNewTokens = newTokens.filter(
+          token => !existingAddresses.has(token.tokenAddress)
+        );
 
-      if (uniqueNewTokens.length > 0) {
-        setNewTokensCount(prev => prev + uniqueNewTokens.length);
-        // Add new tokens to the beginning of the list
-        return [...uniqueNewTokens, ...prevTokens];
+        if (uniqueNewTokens.length > 0) {
+          setNewTokensCount(prev => {
+            const newCount = prev + uniqueNewTokens.length;
+
+            // Show banner when threshold is reached
+            if (newCount >= NEW_TOKEN_THRESHOLD) {
+              setShowNewTokenBanner(true);
+
+              // Auto-refresh if enabled and user is on first page
+              if (autoRefreshEnabled && currentPage === 1 && !searchTerm) {
+                scheduleAutoRefresh();
+              }
+            }
+
+            return newCount;
+          });
+
+          // Add new tokens to the beginning of the list
+          return [...uniqueNewTokens, ...prevTokens];
+        }
+
+        return prevTokens;
+      });
+    },
+    [autoRefreshEnabled, currentPage, searchTerm]
+  );
+
+  // Schedule auto-refresh
+  const scheduleAutoRefresh = useCallback(() => {
+    if (autoRefreshTimeoutRef.current) {
+      clearTimeout(autoRefreshTimeoutRef.current);
+    }
+
+    setPendingRefresh(true);
+
+    autoRefreshTimeoutRef.current = setTimeout(() => {
+      if (autoRefreshEnabled && currentPage === 1 && !searchTerm) {
+        console.log('🔄 Auto-refreshing due to new tokens...');
+        refreshTokenList();
       }
+      setPendingRefresh(false);
+    }, AUTO_REFRESH_DELAY);
+  }, [autoRefreshEnabled, currentPage, searchTerm]);
 
-      return prevTokens;
-    });
+  // Manual refresh function
+  const refreshTokenList = useCallback(async () => {
+    console.log('🔄 Refreshing token list...');
+
+    // Clear new token indicators
+    setNewTokensCount(0);
+    setShowNewTokenBanner(false);
+    setPendingRefresh(false);
+
+    // Clear auto-refresh timeout
+    if (autoRefreshTimeoutRef.current) {
+      clearTimeout(autoRefreshTimeoutRef.current);
+      autoRefreshTimeoutRef.current = null;
+    }
+
+    // Reset to first page if not already there
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    }
+
+    // Temporarily stop polling to avoid conflicts
+    const wasPolling = isPolling;
+    if (wasPolling) {
+      stopPolling();
+    }
+
+    try {
+      // Fetch fresh data
+      await fetchAllTokens(dataSource);
+      setLastRefreshTime(new Date());
+
+      // Resume polling if it was active
+      if (wasPolling) {
+        setTimeout(() => startPolling(), 1000);
+      }
+    } catch (error) {
+      console.error('Error during refresh:', error);
+    }
+  }, [currentPage, isPolling, dataSource]);
+
+  // Dismiss new token banner
+  const dismissBanner = useCallback(() => {
+    setShowNewTokenBanner(false);
+    setNewTokensCount(0);
+
+    // Clear pending auto-refresh
+    if (autoRefreshTimeoutRef.current) {
+      clearTimeout(autoRefreshTimeoutRef.current);
+      autoRefreshTimeoutRef.current = null;
+    }
+    setPendingRefresh(false);
   }, []);
 
   // Fetch all tokens from the specified source
@@ -112,6 +195,7 @@ export default function Home() {
         setDataLoadTime(new Date());
         setNewTokensCount(0);
         setDataSource(source);
+        setShowNewTokenBanner(false);
 
         console.log(
           `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${data.queryTime}`
@@ -144,12 +228,12 @@ export default function Home() {
     }
   };
 
-  // Poll for new tokens
+  // Poll for new tokens (much more aggressive for SQLite)
   const pollForNewTokens = async () => {
     if (!isComponentMountedRef.current) return;
 
     try {
-      const timestamp = lastPollTime || new Date(Date.now() - 60000).toISOString(); // Last minute if no timestamp
+      const timestamp = lastPollTime || new Date(Date.now() - 10000).toISOString(); // Last 10 seconds
 
       const response = await fetch(`/api/tokens/recent?after=${timestamp}&limit=100&stats=true`);
 
@@ -180,7 +264,7 @@ export default function Home() {
   const startPolling = useCallback(() => {
     if (pollingIntervalRef.current || isPolling) return;
 
-    console.log('🔄 Starting token polling...');
+    console.log('🔄 Starting token polling (1 second intervals for SQLite)...');
     setIsPolling(true);
     setLastPollTime(new Date().toISOString());
 
@@ -254,19 +338,26 @@ export default function Home() {
   // Component lifecycle
   useEffect(() => {
     isComponentMountedRef.current = true;
-    fetchAllTokens('sqlite');
+    fetchAllTokens('sqlite'); // Default to SQLite
     fetchStats();
 
     return () => {
       isComponentMountedRef.current = false;
       stopPolling();
+      if (autoRefreshTimeoutRef.current) {
+        clearTimeout(autoRefreshTimeoutRef.current);
+      }
     };
   }, []);
 
   // Reset to page 1 when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm]);
+    // Dismiss banner when searching
+    if (searchTerm) {
+      dismissBanner();
+    }
+  }, [searchTerm, dismissBanner]);
 
   // Event handlers
   const handlePrevPage = () => {
@@ -304,7 +395,7 @@ export default function Home() {
     setSearchTerm('');
     setCurrentPage(1);
     stopPolling();
-    fetchAllTokens(dataSource);
+    refreshTokenList();
   };
 
   const handleSwitchSource = async (newSource: 'sqlite' | 'mongodb') => {
@@ -319,11 +410,62 @@ export default function Home() {
 
     const now = new Date();
     const diffMs = now.getTime() - dataLoadTime.getTime();
-    const diffMins = Math.floor(diffMs / 1000 / 60);
+    const diffSecs = Math.floor(diffMs / 1000);
 
-    if (diffMins < 1) return 'Data loaded just now';
+    if (diffSecs < 5) return 'Data loaded just now';
+    if (diffSecs < 60) return `Data loaded ${diffSecs} seconds ago`;
+    const diffMins = Math.floor(diffSecs / 60);
     if (diffMins === 1) return 'Data loaded 1 minute ago';
     return `Data loaded ${diffMins} minutes ago`;
+  };
+
+  const getRefreshInfo = () => {
+    if (!lastRefreshTime) return '';
+
+    const now = new Date();
+    const diffMs = now.getTime() - lastRefreshTime.getTime();
+    const diffSecs = Math.floor(diffMs / 1000);
+
+    if (diffSecs < 5) return 'Refreshed just now';
+    if (diffSecs < 60) return `Refreshed ${diffSecs}s ago`;
+    const diffMins = Math.floor(diffSecs / 60);
+    return `Refreshed ${diffMins}m ago`;
+  };
+
+  // New Token Banner Component
+  const NewTokenBanner = () => {
+    if (!showNewTokenBanner) return null;
+
+    return (
+      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md w-full mx-4">
+        <div className="bg-blue-600 text-white rounded-lg shadow-lg p-4 flex items-center justify-between animate-slide-down">
+          <div className="flex items-center space-x-3">
+            <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
+            <div>
+              <p className="font-semibold">
+                🚀 {newTokensCount} New Token{newTokensCount !== 1 ? 's' : ''} Available!
+              </p>
+              {pendingRefresh && (
+                <p className="text-sm text-blue-100">
+                  Auto-refreshing in {Math.ceil(AUTO_REFRESH_DELAY / 1000)}s...
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={refreshTokenList}
+              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm font-medium transition-colors"
+            >
+              Refresh Now
+            </button>
+            <button onClick={dismissBanner} className="text-blue-100 hover:text-white p-1">
+              ✕
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const PaginationControls = () => {
@@ -488,6 +630,9 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
+      {/* New Token Banner */}
+      <NewTokenBanner />
+
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-8">
@@ -507,11 +652,11 @@ export default function Home() {
               {isPolling && (
                 <div className="flex items-center space-x-1 text-green-600">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-                  <span>Live Updates</span>
+                  <span>Live Updates (1s)</span>
                 </div>
               )}
 
-              {newTokensCount > 0 && (
+              {newTokensCount > 0 && newTokensCount < NEW_TOKEN_THRESHOLD && (
                 <div className="flex items-center space-x-1 text-blue-600">
                   <span>🆕</span>
                   <span>{newTokensCount} new</span>
@@ -519,6 +664,8 @@ export default function Home() {
               )}
 
               <span>⚡ {getDataInfo()}</span>
+
+              {lastRefreshTime && <span>🔄 {getRefreshInfo()}</span>}
             </div>
 
             {/* Stats */}
@@ -576,13 +723,25 @@ export default function Home() {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex justify-center items-center space-x-4">
+          <div className="flex justify-center items-center space-x-4 flex-wrap gap-2">
             <button
               onClick={handleRefresh}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center space-x-2"
             >
               <span>🔄</span>
               <span>Refresh</span>
+            </button>
+
+            <button
+              onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+              className={`px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
+                autoRefreshEnabled
+                  ? 'bg-green-600 text-white hover:bg-green-700'
+                  : 'bg-gray-600 text-white hover:bg-gray-700'
+              }`}
+            >
+              <span>{autoRefreshEnabled ? '🤖' : '📱'}</span>
+              <span>{autoRefreshEnabled ? 'Auto-Refresh ON' : 'Auto-Refresh OFF'}</span>
             </button>
 
             {dataSource === 'sqlite' ? (
@@ -672,10 +831,28 @@ export default function Home() {
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Total: {allTokens.length.toLocaleString()} tokens • Page {paginationInfo.currentPage} of{' '}
             {paginationInfo.totalPages.toLocaleString()} • Data source: {dataSource.toUpperCase()}
-            {isPolling && ' • Live updates active'}
+            {isPolling && ' • Live updates active (1s intervals)'}
+            {autoRefreshEnabled && ' • Auto-refresh enabled'}
           </p>
         </div>
       </div>
+
+      <style jsx>{`
+        @keyframes slide-down {
+          from {
+            transform: translateY(-100%) translateX(-50%);
+            opacity: 0;
+          }
+          to {
+            transform: translateY(0) translateX(-50%);
+            opacity: 1;
+          }
+        }
+
+        .animate-slide-down {
+          animation: slide-down 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }

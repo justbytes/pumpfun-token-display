@@ -1,5 +1,5 @@
-// src/lib/db/sqlite.ts
-import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
+// src/lib/db/sql.ts
+import Database from 'better-sqlite3';
 import { promises as fs } from 'fs';
 import path from 'path';
 
@@ -24,10 +24,9 @@ interface TokenStats {
   activeBondingCurves: number;
 }
 
-class SQLiteDatabase {
-  private db: SqlJsDatabase | null = null;
+class SQLDatabase {
+  private db: Database.Database | null = null;
   private dbPath: string;
-  private SQL: any = null;
 
   constructor(dbPath?: string) {
     this.dbPath = dbPath || path.join(process.cwd(), 'data', 'pumpfun_tokens.db');
@@ -38,30 +37,18 @@ class SQLiteDatabase {
    */
   async initialize(): Promise<boolean> {
     try {
-      // Initialize sql.js
-      this.SQL = await initSqlJs();
-
       // Ensure data directory exists
       const dataDir = path.dirname(this.dbPath);
       await fs.mkdir(dataDir, { recursive: true });
 
-      // Try to load existing database file
-      let fileBuffer: Buffer | null = null;
-      try {
-        fileBuffer = await fs.readFile(this.dbPath);
-        console.log('📂 Loading existing SQLite database...');
-      } catch (error) {
-        console.log('📝 Creating new SQLite database...');
-      }
-
       // Create database connection
-      this.db = new this.SQL.Database(fileBuffer);
+      this.db = new Database(this.dbPath);
 
       // Configure SQLite for better performance
-      this.db?.run('PRAGMA journal_mode = WAL');
-      this.db?.run('PRAGMA synchronous = NORMAL');
-      this.db?.run('PRAGMA cache_size = 1000000');
-      this.db?.run('PRAGMA temp_store = memory');
+      this.db.pragma('journal_mode = WAL');
+      this.db.pragma('synchronous = NORMAL');
+      this.db.pragma('cache_size = 1000000');
+      this.db.pragma('temp_store = memory');
 
       // Create tokens table
       await this.createTokensTable();
@@ -69,28 +56,11 @@ class SQLiteDatabase {
       // Create indexes for better performance
       await this.createIndexes();
 
-      // Save initial state
-      await this.saveToFile();
-
       console.log('✅ SQLite database initialized successfully');
       return true;
     } catch (error) {
       console.error('❌ Failed to initialize SQLite database:', error);
       return false;
-    }
-  }
-
-  /**
-   * Save database to file
-   */
-  private async saveToFile(): Promise<void> {
-    if (!this.db) return;
-
-    try {
-      const data = this.db.export();
-      await fs.writeFile(this.dbPath, data);
-    } catch (error) {
-      console.error('❌ Error saving database to file:', error);
     }
   }
 
@@ -117,7 +87,7 @@ class SQLiteDatabase {
       )
     `;
 
-    this.db.run(createTableSQL);
+    this.db.exec(createTableSQL);
     console.log('✅ Tokens table created/verified');
   }
 
@@ -138,7 +108,7 @@ class SQLiteDatabase {
     ];
 
     for (const indexSQL of indexes) {
-      this.db.run(indexSQL);
+      this.db.exec(indexSQL);
     }
 
     console.log('✅ Database indexes created/verified');
@@ -155,7 +125,7 @@ class SQLiteDatabase {
         INSERT OR REPLACE INTO tokens (
           bondingCurveAddress, complete, creator, tokenAddress,
           name, symbol, uri, description, image, updatedAt
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       `;
 
       const stmt = this.db.prepare(insertSQL);
@@ -170,10 +140,6 @@ class SQLiteDatabase {
         token.description || '',
         token.image || '',
       ]);
-      stmt.free();
-
-      // Save to file after insert
-      await this.saveToFile();
 
       return true;
     } catch (error) {
@@ -207,7 +173,7 @@ class SQLiteDatabase {
       const updateSQL = `
         UPDATE tokens SET
           complete = ?, creator = ?, name = ?, symbol = ?,
-          uri = ?, description = ?, image = ?, updatedAt = CURRENT_TIMESTAMP
+          uri = ?, description = ?, image = ?, updatedAt = datetime('now')
         WHERE tokenAddress = ? AND (
           complete != ? OR creator != ? OR name != ? OR symbol != ? OR
           uri != ? OR description != ? OR image != ?
@@ -215,16 +181,17 @@ class SQLiteDatabase {
       `;
 
       // Use transaction for better performance
-      this.db.run('BEGIN TRANSACTION');
+      const insertStmt = this.db.prepare(insertSQL);
+      const updateStmt = this.db.prepare(updateSQL);
+      const checkStmt = this.db.prepare(
+        'SELECT COUNT(*) as count FROM tokens WHERE tokenAddress = ?'
+      );
 
-      try {
-        const insertStmt = this.db.prepare(insertSQL);
-        const updateStmt = this.db.prepare(updateSQL);
-
+      const transaction = this.db.transaction((tokens: TokenDocument[]) => {
         for (const token of tokens) {
           try {
             // Try to insert first
-            insertStmt.run([
+            const insertResult = insertStmt.run([
               token.bondingCurveAddress,
               token.complete ? 1 : 0,
               token.creator,
@@ -236,16 +203,7 @@ class SQLiteDatabase {
               token.image || '',
             ]);
 
-            // Check if insert was successful by checking if token exists
-            const checkStmt = this.db.prepare(
-              'SELECT COUNT(*) as count FROM tokens WHERE tokenAddress = ?'
-            );
-            checkStmt.bind([token.tokenAddress]);
-            checkStmt.step();
-            const checkResult = checkStmt.getAsObject() as { count: number };
-            checkStmt.free();
-
-            if (checkResult.count > 0) {
+            if (insertResult.changes > 0) {
               inserted++;
             } else {
               // Token exists, try to update if different
@@ -267,24 +225,20 @@ class SQLiteDatabase {
                 token.image || '',
               ]);
 
-              inserted++; // Count updates as inserts for reporting
+              if (updateResult.changes > 0) {
+                inserted++;
+              } else {
+                duplicates++;
+              }
             }
           } catch (tokenError) {
             console.error(`❌ Error processing token ${token.tokenAddress}:`, tokenError);
             errors++;
           }
         }
+      });
 
-        insertStmt.free();
-        updateStmt.free();
-        this.db.run('COMMIT');
-
-        // Save to file after batch insert
-        await this.saveToFile();
-      } catch (transactionError) {
-        this.db.run('ROLLBACK');
-        throw transactionError;
-      }
+      transaction(tokens);
 
       return { inserted, duplicates, errors };
     } catch (error) {
@@ -348,16 +302,10 @@ class SQLiteDatabase {
       }
 
       const stmt = this.db.prepare(sql);
-      const rows: any[] = [];
-
-      stmt.bind(params);
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
-      stmt.free();
+      const rows = stmt.all(params);
 
       // Convert boolean fields back from integers
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         ...row,
         complete: Boolean(row.complete),
       }));
@@ -387,15 +335,9 @@ class SQLiteDatabase {
     try {
       const sql = 'SELECT * FROM tokens WHERE createdAt > ? ORDER BY createdAt DESC';
       const stmt = this.db.prepare(sql);
-      const rows: any[] = [];
+      const rows = stmt.all(timestamp);
 
-      stmt.bind([timestamp]);
-      while (stmt.step()) {
-        rows.push(stmt.getAsObject());
-      }
-      stmt.free();
-
-      return rows.map(row => ({
+      return rows.map((row: any) => ({
         ...row,
         complete: Boolean(row.complete),
       }));
@@ -421,9 +363,7 @@ class SQLiteDatabase {
       `;
 
       const stmt = this.db.prepare(sql);
-      stmt.step();
-      const result = stmt.getAsObject() as unknown as TokenStats;
-      stmt.free();
+      const result = stmt.get() as TokenStats;
 
       return result;
     } catch (error) {
@@ -441,11 +381,9 @@ class SQLiteDatabase {
     try {
       const sql = 'SELECT COUNT(*) as count FROM tokens';
       const stmt = this.db.prepare(sql);
-      stmt.step();
-      const result = stmt.getAsObject();
-      stmt.free();
+      const result = stmt.get() as { count: number };
 
-      return (result as any).count || 0;
+      return result.count || 0;
     } catch (error) {
       console.error('❌ Error getting token count:', error);
       return 0;
@@ -457,7 +395,6 @@ class SQLiteDatabase {
    */
   async close(): Promise<void> {
     if (this.db) {
-      await this.saveToFile();
       this.db.close();
       this.db = null;
       console.log('✅ SQLite database connection closed');
@@ -466,48 +403,48 @@ class SQLiteDatabase {
 }
 
 // Export singleton instance
-export const sqliteDB = new SQLiteDatabase();
+export const sqlDB = new SQLDatabase();
 
 // Export convenience functions
-export async function initializeSQLiteDB(): Promise<boolean> {
-  return await sqliteDB.initialize();
+export async function initializeSQLDB(): Promise<boolean> {
+  return await sqlDB.initialize();
 }
 
-export async function insertTokenToSQLite(token: TokenDocument): Promise<boolean> {
-  return await sqliteDB.insertToken(token);
+export async function insertTokenToSQL(token: TokenDocument): Promise<boolean> {
+  return await sqlDB.insertToken(token);
 }
 
-export async function insertTokensBatchToSQLite(tokens: TokenDocument[]): Promise<{
+export async function insertTokensBatchToSQL(tokens: TokenDocument[]): Promise<{
   inserted: number;
   duplicates: number;
   errors: number;
 }> {
-  return await sqliteDB.insertTokensBatch(tokens);
+  return await sqlDB.insertTokensBatch(tokens);
 }
 
-export async function getAllTokensFromSQLite(options?: {
+export async function getAllTokensFromSQL(options?: {
   limit?: number;
   offset?: number;
   searchTerm?: string;
   complete?: boolean;
 }): Promise<TokenDocument[]> {
-  return await sqliteDB.getAllTokens(options);
+  return await sqlDB.getAllTokens(options);
 }
 
-export async function getRecentTokensFromSQLite(limit: number = 50): Promise<TokenDocument[]> {
-  return await sqliteDB.getRecentTokens(limit);
+export async function getRecentTokensFromSQL(limit: number = 50): Promise<TokenDocument[]> {
+  return await sqlDB.getRecentTokens(limit);
 }
 
-export async function getTokensAfterFromSQLite(timestamp: string): Promise<TokenDocument[]> {
-  return await sqliteDB.getTokensAfter(timestamp);
+export async function getTokensAfterFromSQL(timestamp: string): Promise<TokenDocument[]> {
+  return await sqlDB.getTokensAfter(timestamp);
 }
 
-export async function getTokenStatsFromSQLite(): Promise<TokenStats | null> {
-  return await sqliteDB.getTokenStats();
+export async function getTokenStatsFromSQL(): Promise<TokenStats | null> {
+  return await sqlDB.getTokenStats();
 }
 
-export async function getTokenCountFromSQLite(): Promise<number> {
-  return await sqliteDB.getTokenCount();
+export async function getTokenCountFromSQL(): Promise<number> {
+  return await sqlDB.getTokenCount();
 }
 
-export { SQLiteDatabase };
+export { SQLDatabase };

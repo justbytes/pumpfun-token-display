@@ -2,10 +2,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTokens, initializeDbConnection } from '../../../lib/db/mongoDB';
 import {
-  getAllTokensFromSQLite,
-  initializeSQLiteDB,
-  getTokenCountFromSQLite,
-  getTokenStatsFromSQLite,
+  getAllTokensFromSQL,
+  initializeSQLDB,
+  getTokenCountFromSQL,
+  getTokenStatsFromSQL,
 } from '../../../lib/db/sql';
 
 export async function GET(request: NextRequest) {
@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
       console.log('📊 Fetching tokens from SQLite...');
 
       // Initialize SQLite if not already done
-      const sqliteInitialized = await initializeSQLiteDB();
+      const sqliteInitialized = await initializeSQLDB();
       if (!sqliteInitialized) {
         console.error('Failed to initialize SQL database');
         // Fallback to MongoDB
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
       const startTime = performance.now();
 
       // Get tokens from SQLite with filtering options
-      const tokens = await getAllTokensFromSQLite({
+      const tokens = await getAllTokensFromSQL({
         limit,
         offset,
         searchTerm,
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
       const queryTime = Math.round(endTime - startTime);
 
       // Get total count for pagination
-      const totalCount = await getTokenCountFromSQLite();
+      const totalCount = await getTokenCountFromSQL();
 
       console.log(`✅ SQLite query completed in ${queryTime}ms`);
 
