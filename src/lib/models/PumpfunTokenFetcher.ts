@@ -1,44 +1,47 @@
-import bs58 from "bs58";
-import {
-  address,
-  createSolanaClient,
-  getAddressEncoder,
-  getProgramDerivedAddress,
-  SolanaClient,
-} from "gill";
-import * as borsh from "@coral-xyz/borsh";
-import { TOKEN_PROGRAM_ADDRESS } from "gill/programs/token";
-import dotenv from "dotenv";
-import { TokenMetadata, BondingCurveData, Token } from "../types/types";
+// src/lib/models/PumpfunTokenFetcher.ts
+
+import bs58 from 'bs58';
+import { address, getAddressEncoder, getProgramDerivedAddress, SolanaClient } from 'gill';
+import * as borsh from '@coral-xyz/borsh';
+import { TOKEN_PROGRAM_ADDRESS } from 'gill/programs/token';
+import dotenv from 'dotenv';
+import { TokenMetadata, BondingCurveData, Token } from '../types/types';
 import {
   initializeDbConnection,
-  createIndexes,
   createTokenIndexes,
-  getAllBondingCurveAddresses,
-  insertBondingCurvesBatch,
   insertTokensBatch,
-  getDatabaseStats,
   getTokenStats,
-  insertBondingCurve,
   insertToken,
-} from "../db/connection";
+} from '../db/mongoDB';
 
 dotenv.config();
 
+interface TokenDocument {
+  bondingCurveAddress: string;
+  complete: boolean;
+  creator: string;
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  uri: string;
+  description: string;
+  image: string;
+}
+
 // Bonding curve schema
 const bondingCurveSchema = borsh.struct([
-  borsh.array(borsh.u8(), 8, "discriminator"),
-  borsh.u64("virtualTokenReserves"),
-  borsh.u64("virtualSolReserves"),
-  borsh.u64("realTokenReserves"),
-  borsh.u64("realSolReserves"),
-  borsh.u64("tokenTotalSupply"),
-  borsh.bool("complete"),
-  borsh.publicKey("creator"),
+  borsh.array(borsh.u8(), 8, 'discriminator'),
+  borsh.u64('virtualTokenReserves'),
+  borsh.u64('virtualSolReserves'),
+  borsh.u64('realTokenReserves'),
+  borsh.u64('realSolReserves'),
+  borsh.u64('tokenTotalSupply'),
+  borsh.bool('complete'),
+  borsh.publicKey('creator'),
 ]);
 
 // Constant variables
-const PUMPFUN_PROGRAM_ID = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+const PUMPFUN_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 const BONDING_CURVE_DISCRIMINATOR = [23, 183, 248, 55, 96, 216, 172, 96];
 
 /**
@@ -66,29 +69,26 @@ class PumpFunTokenFetcher {
   async initializeDatabase(): Promise<void> {
     if (this.dbInitialized) return;
 
-    console.log("🔄 Initializing database connection...");
+    console.log('🔄 Initializing database connection...');
     const connected = await initializeDbConnection();
     if (!connected) {
-      throw new Error("Failed to connect to MongoDB");
+      throw new Error('Failed to connect to MongoDB');
     }
 
-    console.log("📝 Creating database indexes...");
+    console.log('📝 Creating database indexes...');
     await Promise.all([
-      createIndexes(), // Bonding curve indexes
       createTokenIndexes(), // Token indexes
     ]);
 
     this.dbInitialized = true;
-    console.log("✅ Database initialized successfully");
+    console.log('✅ Database initialized successfully');
   }
 
   /**
    * Get token mint address from bonding curve using the bonding curve ATA
    * @param {string} bondingCurveAddress - target bonding curve's we want a token mint for
    */
-  async getMintFromBondingCurveATA(
-    bondingCurveAddress: string
-  ): Promise<string | null> {
+  async getMintFromBondingCurveATA(bondingCurveAddress: string): Promise<string | null> {
     try {
       // Get all token accounts owned by this bonding curve should only have one
       const tokenAccounts = await this.connection.rpc
@@ -98,42 +98,36 @@ class PumpFunTokenFetcher {
             programId: TOKEN_PROGRAM_ADDRESS,
           },
           {
-            encoding: "jsonParsed",
+            encoding: 'jsonParsed',
           }
         )
         .send();
 
       // Handle some cases where tokens aren't there or to many are there
       if (tokenAccounts.value.length === 0) {
-        throw new Error("This bonding curve has no spl tokens!");
+        throw new Error('This bonding curve has no spl tokens!');
       } else if (tokenAccounts.value.length > 1) {
-        throw new Error("This bonding curve has more then one spl token!");
+        throw new Error('This bonding curve has more then one spl token!');
       }
 
       // Returns the mint
       return tokenAccounts.value[0].account.data.parsed.info.mint;
     } catch (error) {
       // Type guard for error handling
-      if (error && typeof error === "object" && "context" in error) {
+      if (error && typeof error === 'object' && 'context' in error) {
         const contextError = error as { context?: { statusCode?: number } };
 
         // Handle retry
         if (contextError.context?.statusCode === 429) {
-          console.log(
-            "Rate limit hit on getMintFromBondingCurveATA() function. Waiting 1 second"
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          console.log('Rate limit hit on getMintFromBondingCurveATA() function. Waiting 1 second');
+          await new Promise(resolve => setTimeout(resolve, 1000));
           return await this.getMintFromBondingCurveATA(bondingCurveAddress);
         }
       }
 
       // Handle error message safely
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.warn(
-        "There was an error getting mint from bonding curve ata",
-        errorMessage
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn('There was an error getting mint from bonding curve ata', errorMessage);
       return null;
     }
   }
@@ -143,73 +137,67 @@ class PumpFunTokenFetcher {
    * @param {string} bondingCurveAddress - target bonding curve
    * @returns
    */
-  async getBondingCurveData(
-    bondingCurveAddress: string
-  ): Promise<BondingCurveData | null> {
+  async getBondingCurveData(bondingCurveAddress: string): Promise<BondingCurveData | null> {
     try {
       // Get bonding curve account data
       const bondingCurveAccountInfo = await this.connection.rpc
         .getAccountInfo(address(bondingCurveAddress), {
-          encoding: "base64",
+          encoding: 'base64',
         })
         .send();
 
       // return if theres nothing
       if (!bondingCurveAccountInfo.value) {
-        console.log(
-          "the bonding curve account info was false\n",
-          bondingCurveAccountInfo
-        );
+        console.log('the bonding curve account info was false\n', bondingCurveAccountInfo);
         return null;
       }
 
       // Convert the data buffer
       const base64Data = bondingCurveAccountInfo.value.data[0];
-      const dataBuffer = Buffer.from(base64Data, "base64");
+      const dataBuffer = Buffer.from(base64Data, 'base64');
 
       // Decode the bonding curve account data using your schema
       return bondingCurveSchema.decode(dataBuffer);
     } catch (error) {
       // Type guard for error handling
-      if (error && typeof error === "object" && "context" in error) {
+      if (error && typeof error === 'object' && 'context' in error) {
         const contextError = error as { context?: { statusCode?: number } };
 
         // Handle retry
         if (contextError.context?.statusCode === 429) {
-          console.log(
-            "Rate limit hit on getBondingCurveData() function. Waiting 1 second"
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          console.log('Rate limit hit on getBondingCurveData() function. Waiting 1 second');
+          await new Promise(resolve => setTimeout(resolve, 1000));
           return await this.getBondingCurveData(bondingCurveAddress);
         }
       }
 
       // Handle error message safely
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.warn(
-        "There was an error getting mint from getBondingCurveData()",
-        errorMessage
-      );
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.warn('There was an error getting mint from getBondingCurveData()', errorMessage);
       return null;
     }
   }
 
   /**
-   * Get token metadata using Helius getAsset endpoint
+   * Get token metadata using Helius getAsset endpoint with retry logic
    * @param {string} tokenAddress - address we want to get metadata for
+   * @param {number} maxRetries - maximum number of retry attempts
+   * @param {number} initialDelay - initial delay in milliseconds
    * @returns
    */
-  async getTokenMetadata(tokenAddress: string): Promise<TokenMetadata | null> {
+  async getTokenMetadata(
+    tokenAddress: string,
+    maxRetries: number = 3,
+    initialDelay: number = 2000
+  ): Promise<TokenMetadata | null> {
     if (!this.heliusUrl) {
       return null;
     }
 
-    // Request headers setting all the options to false since they relate more to nfts
     const requestBody = {
-      jsonrpc: "2.0",
-      id: "get-asset",
-      method: "getAsset",
+      jsonrpc: '2.0',
+      id: 'get-asset',
+      method: 'getAsset',
       params: {
         id: tokenAddress.toString(),
         options: {
@@ -221,70 +209,86 @@ class PumpFunTokenFetcher {
       },
     };
 
-    try {
-      // Send the request
-      const response = await fetch(this.heliusUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-
-      // get the data
-      const data = await response.json();
-
-      // If something went wrong
-      if (data.error) {
-        console.log("ERROR FROM getTokenMetadata data response\n", data.error);
-
-        // Handle retry
-        if (data.error.context?.statusCode == 429) {
-          console.log(
-            "Rate limit hit on getTokenMetadata() call. Waiting 1 second"
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          return await this.getTokenMetadata(tokenAddress);
-        }
-
-        console.warn(
-          `⚠️  Could not get metadata for ${tokenAddress}: ${data.error.message}`
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(
+          `📡 Fetching metadata for ${tokenAddress} (attempt ${attempt + 1}/${maxRetries + 1})`
         );
-        return null;
-      }
 
-      // Parse the result
-      const asset = data.result;
-      return {
-        mint: tokenAddress,
-        name: asset.content?.metadata?.name,
-        symbol: asset.content?.metadata?.symbol,
-        uri: asset.content?.json_uri,
-        description: asset.content?.metadata?.description,
-        image: asset.content?.files?.[0]?.uri,
-      };
-    } catch (error) {
-      // Type guard for error handling
-      if (error && typeof error === "object" && "context" in error) {
-        const contextError = error as { context?: { statusCode?: number } };
+        const response = await fetch(this.heliusUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+        });
 
-        // Handle retry
-        if (contextError.context?.statusCode === 429) {
-          console.log(
-            "Rate limit hit on getTokenMetadata() function. Waiting 1 second"
-          );
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-          return await this.getTokenMetadata(tokenAddress);
+        const data = await response.json();
+
+        // If something went wrong
+        if (data.error) {
+          console.log(`❌ Error fetching metadata (attempt ${attempt + 1}):`, data.error.message);
+
+          // Handle rate limiting
+          if (data.error.code === 429) {
+            const delay = Math.min(initialDelay * Math.pow(2, attempt), 30000); // Cap at 30 seconds
+            console.log(`⏱️ Rate limited, waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+
+          // Handle "Asset Not Found" - this is common for very new tokens
+          if (
+            data.error.message.includes('Asset Not Found') ||
+            data.error.message.includes('RecordNotFound')
+          ) {
+            if (attempt < maxRetries) {
+              const delay = initialDelay * Math.pow(2, attempt); // Exponential backoff
+              console.log(
+                `⏳ Asset not found yet, waiting ${delay}ms before retry (${attempt + 1}/${
+                  maxRetries + 1
+                })...`
+              );
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            } else {
+              console.warn(
+                `⚠️ Asset still not found after ${maxRetries + 1} attempts: ${tokenAddress}`
+              );
+              return null;
+            }
+          }
+
+          // For other errors, don't retry
+          console.warn(`⚠️ Non-retryable error for ${tokenAddress}: ${data.error.message}`);
+          return null;
+        }
+
+        // Success! Parse the result
+        const asset = data.result;
+        console.log(`✅ Successfully fetched metadata for ${tokenAddress}`);
+
+        return {
+          mint: tokenAddress,
+          name: asset.content?.metadata?.name || 'Unknown Token',
+          symbol: asset.content?.metadata?.symbol || 'UNKNOWN',
+          uri: asset.content?.json_uri || '',
+          description: asset.content?.metadata?.description || '',
+          image: asset.content?.files?.[0]?.uri || '',
+        };
+      } catch (error) {
+        console.error(`❌ Network error fetching metadata (attempt ${attempt + 1}):`, error);
+
+        if (attempt < maxRetries) {
+          const delay = initialDelay * Math.pow(2, attempt);
+          console.log(`⏱️ Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
-
-      // Handle error message safely
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      console.warn(
-        "There was an error getting mint from getTokenMetadata()",
-        errorMessage
-      );
-      return null;
     }
+
+    console.warn(
+      `❌ Failed to fetch metadata for ${tokenAddress} after ${maxRetries + 1} attempts`
+    );
+    return null;
   }
 
   /**
@@ -300,7 +304,7 @@ class PumpFunTokenFetcher {
 
       // Use your existing pattern to get bonding curve
       const [bondingCurve, _bondingBump] = await getProgramDerivedAddress({
-        seeds: ["bonding-curve", getAddressEncoder().encode(mint)],
+        seeds: ['bonding-curve', getAddressEncoder().encode(mint)],
         programAddress: address(PUMPFUN_PROGRAM_ID),
       });
 
@@ -326,26 +330,18 @@ class PumpFunTokenFetcher {
    * Gets the token data using a bonding curve address
    * @param {string} bondingCurveAddress - target bonding curve
    */
-  async getDataWithBondingCurveAddress(
-    bondingCurveAddress: string
-  ): Promise<Token | null> {
+  async getDataWithBondingCurveAddress(bondingCurveAddress: string): Promise<TokenDocument | null> {
     try {
       // Get the bonding curve data
-      const bondingCurveData = await this.getBondingCurveData(
-        bondingCurveAddress
-      );
+      const bondingCurveData = await this.getBondingCurveData(bondingCurveAddress);
 
       if (!bondingCurveData) {
-        console.warn(
-          `Could not get bonding curve data for ${bondingCurveAddress}`
-        );
+        console.warn(`Could not get bonding curve data for ${bondingCurveAddress}`);
         return null;
       }
 
       // Get the token address using the bonding curve address
-      const tokenAddress = await this.getMintFromBondingCurveATA(
-        bondingCurveAddress
-      );
+      const tokenAddress = await this.getMintFromBondingCurveATA(bondingCurveAddress);
 
       if (!tokenAddress) {
         console.warn(`Could not get token address for ${bondingCurveAddress}`);
@@ -362,15 +358,17 @@ class PumpFunTokenFetcher {
 
       return {
         bondingCurveAddress,
+        complete: bondingCurveData.complete,
+        creator: bondingCurveData.creator,
         tokenAddress,
-        bondingCurveData,
-        tokenData,
+        name: tokenData.name,
+        symbol: tokenData.symbol,
+        uri: tokenData.uri,
+        description: tokenData.description,
+        image: tokenData.image,
       };
     } catch (error) {
-      console.error(
-        `❌ Error processing bonding curve ${bondingCurveAddress}:`,
-        error
-      );
+      console.error(`❌ Error processing bonding curve ${bondingCurveAddress}:`, error);
       return null;
     }
   }
@@ -381,18 +379,18 @@ class PumpFunTokenFetcher {
    */
   async getAllBondingCurves() {
     if (!this.heliusUrl) {
-      throw new Error("Helius API key required for getProgramAccounts");
+      throw new Error('Helius API key required for getProgramAccounts');
     }
 
     // Request body
     const requestBody = {
-      jsonrpc: "2.0",
-      id: "get-bonding-curves",
-      method: "getProgramAccounts",
+      jsonrpc: '2.0',
+      id: 'get-bonding-curves',
+      method: 'getProgramAccounts',
       params: [
         PUMPFUN_PROGRAM_ID,
         {
-          encoding: "base64",
+          encoding: 'base64',
           filters: [
             {
               memcmp: {
@@ -415,8 +413,8 @@ class PumpFunTokenFetcher {
     try {
       // Make the call to the helius endpoint
       const response = await fetch(this.heliusUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestBody),
       });
 
@@ -430,41 +428,15 @@ class PumpFunTokenFetcher {
 
       return data.result;
     } catch (error) {
-      console.warn(
-        "There was an error with the Helius getProgramAccounts call",
-        error
-      );
+      console.warn('There was an error with the Helius getProgramAccounts call', error);
       return null;
     }
   }
 
-  /**
-   * Store all bonding curve addresses to the database
-   */
-  async collectAndStoreBondingCurves(): Promise<void> {
-    await this.initializeDatabase();
-
-    console.log("🔄 Fetching all bonding curves from Helius...");
-    const allBondingCurves = await this.getAllBondingCurves();
-
-    if (!allBondingCurves) {
-      throw new Error("Failed to fetch bonding curves from Helius");
-    }
-
-    // Extract addresses
-    const bondingAddresses = allBondingCurves.map(
-      (bonding: { pubkey: string }) => bonding.pubkey
-    );
-
-    console.log(`📊 Found ${bondingAddresses.length} bonding curve addresses`);
-
-    // Store in database using batch insert
-    const result = await insertBondingCurvesBatch(bondingAddresses);
-
-    console.log("✅ Bonding curves stored in database:");
-    console.log(`   Inserted: ${result.inserted}`);
-    console.log(`   Duplicates: ${result.duplicates}`);
-    console.log(`   Errors: ${result.errors}`);
+  // Get all of the bonding curves from sqlite db
+  async getAllBondingCurveAddresses() {
+    console.log('Not yet implemented');
+    return [];
   }
 
   /**
@@ -474,17 +446,15 @@ class PumpFunTokenFetcher {
   async updateTokenList(): Promise<void> {
     await this.initializeDatabase();
 
-    console.log("🔄 Starting incremental update process...");
+    console.log('🔄 Starting incremental update process...');
 
     // Get all current bonding curves from Helius
     const allCurrentBondingCurves = await this.getAllBondingCurves();
     if (!allCurrentBondingCurves) {
-      throw new Error("Failed to fetch current bonding curves");
+      throw new Error('Failed to fetch current bonding curves');
     }
 
-    console.log(
-      `📊 Found ${allCurrentBondingCurves.length} total bonding curves on-chain`
-    );
+    console.log(`📊 Found ${allCurrentBondingCurves.length} total bonding curves on-chain`);
 
     // Extract just the addresses from the current bonding curves
     const currentAddresses = allCurrentBondingCurves.map(
@@ -492,52 +462,33 @@ class PumpFunTokenFetcher {
     );
 
     // Get existing addresses from database
-    const existingAddresses = await getAllBondingCurveAddresses();
-    console.log(
-      `📋 Found ${existingAddresses.length} previously processed addresses in database`
-    );
+    const existingAddresses = await this.getAllBondingCurveAddresses();
+    console.log(`📋 Found ${existingAddresses.length} previously processed addresses in database`);
 
     // Find new addresses that haven't been processed yet
     const newAddresses = currentAddresses.filter(
       (address: string) => !existingAddresses.includes(address)
     );
 
-    console.log(
-      `🆕 Found ${newAddresses.length} new bonding curves to process`
-    );
+    console.log(`🆕 Found ${newAddresses.length} new bonding curves to process`);
 
     if (newAddresses.length === 0) {
-      console.log("✅ No new bonding curves to process!");
+      console.log('✅ No new bonding curves to process!');
       return;
     }
-
-    // First, store all the new bonding curve addresses
-    console.log("📝 Storing new bonding curve addresses...");
-    const bondingCurveResult = await insertBondingCurvesBatch(newAddresses);
-    console.log(
-      `   Inserted: ${bondingCurveResult.inserted} bonding curve addresses`
-    );
 
     // Process tokens in batches
     const BATCH_SIZE = 100;
     let processedCount = 0;
-    let tokenBatch: Token[] = [];
+    let tokenBatch: TokenDocument[] = [];
 
-    console.log(
-      `🚀 Starting to process ${newAddresses.length} new bonding curves...`
-    );
+    console.log(`🚀 Starting to process ${newAddresses.length} new bonding curves...`);
 
     for (let i = 0; i < newAddresses.length; i++) {
       try {
-        console.log(
-          `Processing ${i + 1}/${newAddresses.length} - Address: ${
-            newAddresses[i]
-          }`
-        );
+        console.log(`Processing ${i + 1}/${newAddresses.length} - Address: ${newAddresses[i]}`);
 
-        const tokenData = await this.getDataWithBondingCurveAddress(
-          newAddresses[i]
-        );
+        const tokenData = await this.getDataWithBondingCurveAddress(newAddresses[i]);
         if (tokenData) {
           tokenBatch.push(tokenData);
           processedCount++;
@@ -546,9 +497,7 @@ class PumpFunTokenFetcher {
         // Process batch when it reaches BATCH_SIZE or at the end
         if (tokenBatch.length >= BATCH_SIZE || i === newAddresses.length - 1) {
           if (tokenBatch.length > 0) {
-            console.log(
-              `💾 Storing batch of ${tokenBatch.length} tokens to database...`
-            );
+            console.log(`💾 Storing batch of ${tokenBatch.length} tokens to database...`);
             const result = await insertTokensBatch(tokenBatch);
             console.log(
               `   Inserted: ${result.inserted}, Duplicates: ${result.duplicates}, Errors: ${result.errors}`
@@ -556,9 +505,7 @@ class PumpFunTokenFetcher {
             tokenBatch = []; // Clear the batch for next round
           }
 
-          console.log(
-            `📊 Progress: ${processedCount}/${newAddresses.length} new tokens processed`
-          );
+          console.log(`📊 Progress: ${processedCount}/${newAddresses.length} new tokens processed`);
         }
       } catch (error) {
         console.error(
@@ -572,9 +519,6 @@ class PumpFunTokenFetcher {
     console.log(
       `✅ Completed incremental update! Processed ${processedCount} new tokens out of ${newAddresses.length} new bonding curves.`
     );
-
-    // Show updated database stats
-    await this.showDatabaseStats();
   }
 
   /**
@@ -585,20 +529,16 @@ class PumpFunTokenFetcher {
     await this.initializeDatabase();
 
     const BATCH_SIZE = 100;
-    let tokenBatch: Token[] = [];
+    let tokenBatch: TokenDocument[] = [];
     let processedCount = 0;
 
     console.log(`🚀 Starting to process ${addresses.length} bonding curves...`);
 
     for (let i = 0; i < addresses.length; i++) {
       try {
-        console.log(
-          `Processing ${i + 1}/${addresses.length} - Address: ${addresses[i]}`
-        );
+        console.log(`Processing ${i + 1}/${addresses.length} - Address: ${addresses[i]}`);
 
-        const tokenData = await this.getDataWithBondingCurveAddress(
-          addresses[i]
-        );
+        const tokenData = await this.getDataWithBondingCurveAddress(addresses[i]);
         if (tokenData) {
           tokenBatch.push(tokenData);
           processedCount++;
@@ -607,9 +547,7 @@ class PumpFunTokenFetcher {
         // Process batch when it reaches BATCH_SIZE or at the end
         if (tokenBatch.length >= BATCH_SIZE || i === addresses.length - 1) {
           if (tokenBatch.length > 0) {
-            console.log(
-              `💾 Storing batch of ${tokenBatch.length} tokens to database...`
-            );
+            console.log(`💾 Storing batch of ${tokenBatch.length} tokens to database...`);
             const result = await insertTokensBatch(tokenBatch);
             console.log(
               `   Inserted: ${result.inserted}, Duplicates: ${result.duplicates}, Errors: ${result.errors}`
@@ -617,105 +555,39 @@ class PumpFunTokenFetcher {
             tokenBatch = []; // Clear the batch for next round
           }
 
-          console.log(
-            `📊 Progress: ${processedCount}/${addresses.length} tokens processed`
-          );
+          console.log(`📊 Progress: ${processedCount}/${addresses.length} tokens processed`);
         }
       } catch (error) {
-        console.error(
-          `❌ Error processing bonding curve at index ${i} (${addresses[i]}):`,
-          error
-        );
+        console.error(`❌ Error processing bonding curve at index ${i} (${addresses[i]}):`, error);
         // Continue processing even if one fails
       }
     }
 
-    console.log(
-      `✅ Completed processing! Successfully processed ${processedCount} tokens!`
-    );
-  }
-
-  /**
-   * Display current database statistics
-   */
-  async showDatabaseStats(): Promise<void> {
-    console.log("\n📊 Database Statistics:");
-
-    const [bondingCurveStats, tokenStats] = await Promise.all([
-      getDatabaseStats(),
-      getTokenStats(),
-    ]);
-
-    console.log(`   Bonding curve addresses: ${bondingCurveStats || 0}`);
-    console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
-    console.log(
-      `   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`
-    );
-    console.log(
-      `   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`
-    );
-  }
-
-  /**
-   * Add a single bonding curve and its token data to the database
-   * @param bondingCurveAddress - The bonding curve address to add
-   */
-  async addSingleToken(bondingCurveAddress: string): Promise<boolean> {
-    await this.initializeDatabase();
-
-    try {
-      // Add the bonding curve address
-      await insertBondingCurve(bondingCurveAddress);
-
-      // Get and store the token data
-      const tokenData = await this.getDataWithBondingCurveAddress(
-        bondingCurveAddress
-      );
-      if (tokenData) {
-        const success = await insertToken(tokenData);
-        if (success) {
-          console.log(
-            `✅ Successfully added token for bonding curve: ${bondingCurveAddress}`
-          );
-          return true;
-        }
-      }
-
-      console.log(
-        `❌ Failed to add token for bonding curve: ${bondingCurveAddress}`
-      );
-      return false;
-    } catch (error) {
-      console.error(`❌ Error adding single token: ${error}`);
-      return false;
-    }
+    console.log(`✅ Completed processing! Successfully processed ${processedCount} tokens!`);
   }
 }
 
-// Updated main function that uses database instead of files
-async function main() {
-  // Initialize connection
-  const connection: SolanaClient<string> = createSolanaClient({
-    urlOrMoniker: `${process.env.HELIUS_RPC_URL}`,
-  });
+// // Updated main function that uses database instead of files
+// async function main() {
+//   // Initialize connection
+//   const connection: SolanaClient<string> = createSolanaClient({
+//     urlOrMoniker: `${process.env.HELIUS_RPC_URL}`,
+//   });
 
-  // Create an instance of the pumpfun token fetcher class
-  const fetcher = new PumpFunTokenFetcher(
-    connection,
-    `${process.env.HELIUS_KEY}`
-  );
+//   // Create an instance of the pumpfun token fetcher class
+//   const fetcher = new PumpFunTokenFetcher(connection, `${process.env.HELIUS_KEY}`);
 
-  try {
-    // Update the db with the new tokens created
-    await fetcher.updateTokenList();
+//   try {
+//     // Update the db with the new tokens created
+//     await fetcher.updateTokenList();
 
-    process.exit(0);
-  } catch (error) {
-    console.error("❌ Error in main process:", error);
-    process.exit(1);
-  }
-}
+//     process.exit(0);
+//   } catch (error) {
+//     console.error('❌ Error in main process:', error);
+//     process.exit(1);
+//   }
+// }
 
-main();
+// main();
 
 export { PumpFunTokenFetcher, bondingCurveSchema };
