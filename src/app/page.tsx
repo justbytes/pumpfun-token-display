@@ -53,6 +53,7 @@ export default function Home() {
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
   // Refs for polling
+  const lastPollTimeRef = useRef<string | null>(null);
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isComponentMountedRef = useRef(true);
   const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -62,64 +63,114 @@ export default function Home() {
   const AUTO_REFRESH_DELAY = 3000; // 3 seconds before auto-refreshing
   const NEW_TOKEN_THRESHOLD = 5; // Show banner after 5 new tokens
 
-  // Add multiple new tokens
-  const addNewTokens = useCallback(
-    (newTokens: Token[]) => {
-      if (newTokens.length === 0) return;
+  // Poll for new tokens
+  const pollForNewTokens = useCallback(async () => {
+    if (!isComponentMountedRef.current) return;
 
-      setAllTokens(prevTokens => {
-        const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
-        const uniqueNewTokens = newTokens.filter(
-          token => !existingAddresses.has(token.tokenAddress)
-        );
+    try {
+      // Just get the most recent 20 tokens from the database
+      const response = await fetch('/api/tokens/recent?limit=50');
 
-        if (uniqueNewTokens.length > 0) {
-          setNewTokensCount(prev => {
-            const newCount = prev + uniqueNewTokens.length;
+      if (!response.ok) {
+        console.warn('❌ Polling failed:', response.status);
+        return;
+      }
 
-            // Show banner when threshold is reached
-            if (newCount >= NEW_TOKEN_THRESHOLD) {
-              setShowNewTokenBanner(true);
+      const data = await response.json();
 
-              // Auto-refresh if enabled and user is on first page
-              if (autoRefreshEnabled && currentPage === 1 && !searchTerm) {
-                scheduleAutoRefresh();
-              }
-            }
+      if (data.success && data.tokens && data.tokens.length > 0) {
+        console.log(`📦 Got ${data.tokens.length} recent tokens from API`);
 
-            return newCount;
-          });
+        // Add any tokens we don't already have
+        setAllTokens(prevTokens => {
+          const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
 
-          // Add new tokens to the beginning of the list
-          return [...uniqueNewTokens, ...prevTokens];
-        }
+          // Find tokens we don't have yet
+          const newTokens = data.tokens.filter(
+            (token: Token) => !existingAddresses.has(token.tokenAddress)
+          );
 
-        return prevTokens;
-      });
-    },
-    [autoRefreshEnabled, currentPage, searchTerm]
-  );
+          if (newTokens.length > 0) {
+            console.log(`🆕 Adding ${newTokens.length} new tokens to display`);
 
-  // Schedule auto-refresh
-  const scheduleAutoRefresh = useCallback(() => {
-    if (autoRefreshTimeoutRef.current) {
-      clearTimeout(autoRefreshTimeoutRef.current);
+            setNewTokensCount(prev => prev + newTokens.length);
+            setShowNewTokenBanner(true);
+
+            // Add new tokens to the front of the list
+            return [...newTokens, ...prevTokens];
+          }
+
+          return prevTokens;
+        });
+      }
+    } catch (error) {
+      console.error('❌ Polling error:', error);
+    }
+  }, []);
+  // Start polling for new tokens
+  const startPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      console.log('Polling already active, skipping start');
+      return;
     }
 
-    setPendingRefresh(true);
+    console.log('🔄 Starting token polling...');
+    setIsPolling(true);
+    const now = new Date().toISOString();
+    setLastPollTime(now);
+    lastPollTimeRef.current = now; // Set both state and ref
 
-    autoRefreshTimeoutRef.current = setTimeout(() => {
-      if (autoRefreshEnabled && currentPage === 1 && !searchTerm) {
-        console.log('🔄 Auto-refreshing due to new tokens...');
-        refreshTokenList();
+    pollingIntervalRef.current = setInterval(() => {
+      if (isComponentMountedRef.current) {
+        pollForNewTokens();
       }
-      setPendingRefresh(false);
-    }, AUTO_REFRESH_DELAY);
-  }, [autoRefreshEnabled, currentPage, searchTerm]);
+    }, POLLING_INTERVAL);
+  }, [pollForNewTokens]);
 
-  // Manual refresh function
+  // const usePolling = (pollingFunction: () => Promise<void>, interval: number, enabled: boolean) => {
+  //   const savedCallback = useRef<() => Promise<void>>();
+  //   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  //   // Remember the latest callback
+  //   useEffect(() => {
+  //     savedCallback.current = pollingFunction;
+  //   }, [pollingFunction]);
+
+  //   // Set up the interval
+  //   useEffect(() => {
+  //     function tick() {
+  //       if (savedCallback.current) {
+  //         savedCallback.current();
+  //       }
+  //     }
+
+  //     if (enabled && interval > 0) {
+  //       intervalRef.current = setInterval(tick, interval);
+  //       return () => {
+  //         if (intervalRef.current) {
+  //           clearInterval(intervalRef.current);
+  //           intervalRef.current = null;
+  //         }
+  //       };
+  //     }
+  //   }, [interval, enabled]);
+
+  //   return intervalRef;
+  // };
+
+  // Stop polling
+  const stopPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+      setIsPolling(false);
+      console.log('🛑 Token polling stopped');
+    }
+  }, []);
+
+  // Manual refresh function (for full data reload)
   const refreshTokenList = useCallback(async () => {
-    console.log('🔄 Refreshing token list...');
+    console.log('🔄 Full refresh - reloading all token data...');
 
     // Clear new token indicators
     setNewTokensCount(0);
@@ -140,22 +191,84 @@ export default function Home() {
     // Temporarily stop polling to avoid conflicts
     const wasPolling = isPolling;
     if (wasPolling) {
-      stopPolling();
+      // Stop polling
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+        setIsPolling(false);
+      }
     }
 
     try {
-      // Fetch fresh data
-      await fetchAllTokens(dataSource);
+      // Fetch fresh data directly without using the callback
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`/api/token-list?source=${dataSource}`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        setAllTokens(data.tokens);
+        setDataLoadTime(new Date());
+        setNewTokensCount(0);
+        setShowNewTokenBanner(false);
+        console.log(`✅ Refreshed ${data.tokens.length} tokens`);
+      } else {
+        throw new Error(data.error || 'Failed to fetch tokens');
+      }
+
       setLastRefreshTime(new Date());
 
       // Resume polling if it was active
-      if (wasPolling) {
-        setTimeout(() => startPolling(), 1000);
+      if (wasPolling && dataSource === 'sqlite') {
+        setTimeout(() => {
+          console.log('🔄 Resuming token polling...');
+          setIsPolling(true);
+          setLastPollTime(new Date().toISOString());
+          pollingIntervalRef.current = setInterval(() => {
+            pollForNewTokens();
+          }, POLLING_INTERVAL);
+        }, 1000);
       }
     } catch (error) {
       console.error('Error during refresh:', error);
+      setError('Failed to refresh tokens. Please try again.');
+    } finally {
+      setLoading(false);
     }
-  }, [currentPage, isPolling, dataSource]);
+  }, [currentPage, isPolling, dataSource, pollForNewTokens]);
+  const handleBannerRefresh = useCallback(() => {
+    console.log('🔄 Banner refresh clicked - scrolling to top and clearing indicators...');
+
+    // Clear new token indicators
+    setNewTokensCount(0);
+    setShowNewTokenBanner(false);
+    setPendingRefresh(false);
+
+    // Clear auto-refresh timeout
+    if (autoRefreshTimeoutRef.current) {
+      clearTimeout(autoRefreshTimeoutRef.current);
+      autoRefreshTimeoutRef.current = null;
+    }
+
+    // Scroll to top to show the new tokens that are already in the list
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+    // If not on first page, go to first page to see the new tokens
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    }
+
+    // Clear search if active to see all tokens
+    if (searchTerm) {
+      setSearchTerm('');
+    }
+
+    setLastRefreshTime(new Date());
+  }, [currentPage, searchTerm]);
 
   // Dismiss new token banner
   const dismissBanner = useCallback(() => {
@@ -171,118 +284,70 @@ export default function Home() {
   }, []);
 
   // Fetch all tokens from the specified source
-  const fetchAllTokens = async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
-    try {
-      setLoading(true);
-      setError(null);
+  const fetchAllTokens = useCallback(
+    async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
+      try {
+        setLoading(true);
+        setError(null);
 
-      console.log(`Fetching all tokens from ${source.toUpperCase()}...`);
-      const startTime = performance.now();
+        console.log(`Fetching all tokens from ${source.toUpperCase()}...`);
+        const startTime = performance.now();
 
-      const response = await fetch(`/api/token-list?source=${source}`);
+        const response = await fetch(`/api/token-list?source=${source}`);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-      const data = await response.json();
+        const data = await response.json();
 
-      if (data.success) {
-        const endTime = performance.now();
-        const loadTime = Math.round(endTime - startTime);
+        if (data.success) {
+          const endTime = performance.now();
+          const loadTime = Math.round(endTime - startTime);
 
-        setAllTokens(data.tokens);
-        setDataLoadTime(new Date());
-        setNewTokensCount(0);
-        setDataSource(source);
-        setShowNewTokenBanner(false);
+          setAllTokens(data.tokens);
+          setDataLoadTime(new Date());
+          setNewTokensCount(0);
+          setDataSource(source);
+          setShowNewTokenBanner(false);
 
-        console.log(
-          `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${data.queryTime}`
-        );
-        console.log(`📊 Total transfer time: ${loadTime}ms`);
+          console.log(
+            `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${
+              data.queryTime
+            }`
+          );
+          console.log(`📊 Total transfer time: ${loadTime}ms`);
 
-        // Start polling if using SQLite
+          // Start polling if using SQLite
+          if (source === 'sqlite') {
+            startPolling();
+          }
+        } else {
+          throw new Error(data.error || 'Failed to fetch tokens');
+        }
+      } catch (error) {
+        console.error('Error fetching tokens:', error);
+        setError('Failed to fetch tokens. Please try again.');
+
+        // If SQLite fails, try MongoDB as fallback
         if (source === 'sqlite') {
-          startPolling();
+          console.log('🔄 SQLite failed, falling back to MongoDB...');
+          try {
+            await fetchAllTokens('mongodb');
+            return;
+          } catch (mongoError) {
+            console.error('MongoDB fallback also failed:', mongoError);
+          }
         }
-      } else {
-        throw new Error(data.error || 'Failed to fetch tokens');
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching tokens:', error);
-      setError('Failed to fetch tokens. Please try again.');
-
-      // If SQLite fails, try MongoDB as fallback
-      if (source === 'sqlite') {
-        console.log('🔄 SQLite failed, falling back to MongoDB...');
-        try {
-          await fetchAllTokens('mongodb');
-          return;
-        } catch (mongoError) {
-          console.error('MongoDB fallback also failed:', mongoError);
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Poll for new tokens (much more aggressive for SQLite)
-  const pollForNewTokens = async () => {
-    if (!isComponentMountedRef.current) return;
-
-    try {
-      const timestamp = lastPollTime || new Date(Date.now() - 10000).toISOString(); // Last 10 seconds
-
-      const response = await fetch(`/api/tokens/recent?after=${timestamp}&limit=100&stats=true`);
-
-      if (!response.ok) {
-        console.warn('Polling request failed:', response.status);
-        return;
-      }
-
-      const data = await response.json();
-
-      if (data.success && data.tokens.length > 0) {
-        console.log(`🆕 Found ${data.tokens.length} new tokens`);
-        addNewTokens(data.tokens);
-
-        // Update stats if provided
-        if (data.stats) {
-          setStats(data.stats);
-        }
-      }
-
-      setLastPollTime(data.timestamp);
-    } catch (error) {
-      console.warn('Polling error:', error);
-    }
-  };
-
-  // Start polling for new tokens
-  const startPolling = useCallback(() => {
-    if (pollingIntervalRef.current || isPolling) return;
-
-    console.log('🔄 Starting token polling (1 second intervals for SQLite)...');
-    setIsPolling(true);
-    setLastPollTime(new Date().toISOString());
-
-    pollingIntervalRef.current = setInterval(pollForNewTokens, POLLING_INTERVAL);
-  }, [isPolling, lastPollTime]);
-
-  // Stop polling
-  const stopPolling = useCallback(() => {
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-      setIsPolling(false);
-      console.log('🛑 Token polling stopped');
-    }
-  }, []);
+    },
+    [startPolling]
+  );
 
   // Fetch token stats
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const response = await fetch('/api/tokens/recent?stats=true&limit=0');
       if (response.ok) {
@@ -294,7 +359,7 @@ export default function Home() {
     } catch (error) {
       console.warn('Failed to fetch stats:', error);
     }
-  };
+  }, []);
 
   // Filter tokens based on search term
   const filteredTokens = useMemo(() => {
@@ -338,8 +403,18 @@ export default function Home() {
   // Component lifecycle
   useEffect(() => {
     isComponentMountedRef.current = true;
-    fetchAllTokens('sqlite'); // Default to SQLite
-    fetchStats();
+
+    const initializeApp = async () => {
+      await fetchAllTokens('sqlite'); // Default to SQLite
+      await fetchStats();
+
+      // Start polling after initial load if using SQLite
+      if (dataSource === 'sqlite') {
+        setTimeout(() => startPolling(), 100);
+      }
+    };
+
+    initializeApp();
 
     return () => {
       isComponentMountedRef.current = false;
@@ -348,7 +423,7 @@ export default function Home() {
         clearTimeout(autoRefreshTimeoutRef.current);
       }
     };
-  }, []);
+  }, []); // Remove dependencies to avoid infinite loops
 
   // Reset to page 1 when search changes
   useEffect(() => {
@@ -398,13 +473,6 @@ export default function Home() {
     refreshTokenList();
   };
 
-  const handleSwitchSource = async (newSource: 'sqlite' | 'mongodb') => {
-    if (newSource !== dataSource) {
-      stopPolling();
-      await fetchAllTokens(newSource);
-    }
-  };
-
   const getDataInfo = () => {
     if (!dataLoadTime) return '';
 
@@ -430,42 +498,6 @@ export default function Home() {
     if (diffSecs < 60) return `Refreshed ${diffSecs}s ago`;
     const diffMins = Math.floor(diffSecs / 60);
     return `Refreshed ${diffMins}m ago`;
-  };
-
-  // New Token Banner Component
-  const NewTokenBanner = () => {
-    if (!showNewTokenBanner) return null;
-
-    return (
-      <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50 max-w-md w-full mx-4">
-        <div className="bg-blue-600 text-white rounded-lg shadow-lg p-4 flex items-center justify-between animate-slide-down">
-          <div className="flex items-center space-x-3">
-            <div className="w-3 h-3 bg-green-400 rounded-full animate-pulse"></div>
-            <div>
-              <p className="font-semibold">
-                🚀 {newTokensCount} New Token{newTokensCount !== 1 ? 's' : ''} Available!
-              </p>
-              {pendingRefresh && (
-                <p className="text-sm text-blue-100">
-                  Auto-refreshing in {Math.ceil(AUTO_REFRESH_DELAY / 1000)}s...
-                </p>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={refreshTokenList}
-              className="bg-white bg-opacity-20 hover:bg-opacity-30 px-3 py-1 rounded text-sm font-medium transition-colors"
-            >
-              Refresh Now
-            </button>
-            <button onClick={dismissBanner} className="text-blue-100 hover:text-white p-1">
-              ✕
-            </button>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   const PaginationControls = () => {
@@ -590,9 +622,7 @@ export default function Home() {
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
             Loading PumpFun Tokens
           </h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            Loading from {dataSource.toUpperCase()}...
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">Loading tokens please wait...</p>
         </div>
       </div>
     );
@@ -614,14 +644,6 @@ export default function Home() {
             >
               Try Again
             </button>
-            {dataSource === 'sqlite' && (
-              <button
-                onClick={() => handleSwitchSource('mongodb')}
-                className="px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors duration-200"
-              >
-                Use MongoDB
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -630,9 +652,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
-      {/* New Token Banner */}
-      <NewTokenBanner />
-
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="text-center mb-8">
@@ -644,11 +663,6 @@ export default function Home() {
               {allTokens.length.toLocaleString()} tokens • Lightning-fast navigation
             </p>
             <div className="flex justify-center items-center space-x-4 text-sm flex-wrap">
-              <div className="flex items-center space-x-2">
-                <span>💾 Source:</span>
-                <span className="font-semibold">{dataSource.toUpperCase()}</span>
-              </div>
-
               {isPolling && (
                 <div className="flex items-center space-x-1 text-green-600">
                   <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
@@ -667,15 +681,6 @@ export default function Home() {
 
               {lastRefreshTime && <span>🔄 {getRefreshInfo()}</span>}
             </div>
-
-            {/* Stats */}
-            {stats && (
-              <div className="flex justify-center items-center space-x-6 text-sm text-gray-500">
-                <span>Total: {stats.totalTokens.toLocaleString()}</span>
-                <span>Active: {stats.activeBondingCurves.toLocaleString()}</span>
-                <span>Completed: {stats.completedBondingCurves.toLocaleString()}</span>
-              </div>
-            )}
           </div>
         </div>
 
@@ -743,38 +748,6 @@ export default function Home() {
               <span>{autoRefreshEnabled ? '🤖' : '📱'}</span>
               <span>{autoRefreshEnabled ? 'Auto-Refresh ON' : 'Auto-Refresh OFF'}</span>
             </button>
-
-            {dataSource === 'sqlite' ? (
-              <button
-                onClick={() => handleSwitchSource('mongodb')}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors duration-200 flex items-center space-x-2"
-              >
-                <span>📊</span>
-                <span>Switch to MongoDB</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => handleSwitchSource('sqlite')}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2"
-              >
-                <span>⚡</span>
-                <span>Switch to SQLite</span>
-              </button>
-            )}
-
-            {dataSource === 'sqlite' && (
-              <button
-                onClick={isPolling ? stopPolling : startPolling}
-                className={`px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
-                  isPolling
-                    ? 'bg-red-600 text-white hover:bg-red-700'
-                    : 'bg-green-600 text-white hover:bg-green-700'
-                }`}
-              >
-                <span>{isPolling ? '⏸️' : '▶️'}</span>
-                <span>{isPolling ? 'Stop Live Updates' : 'Start Live Updates'}</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -830,7 +803,7 @@ export default function Home() {
         <div className="text-center py-8 border-t border-gray-200 dark:border-gray-700 mt-8">
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Total: {allTokens.length.toLocaleString()} tokens • Page {paginationInfo.currentPage} of{' '}
-            {paginationInfo.totalPages.toLocaleString()} • Data source: {dataSource.toUpperCase()}
+            {paginationInfo.totalPages.toLocaleString()}
             {isPolling && ' • Live updates active (1s intervals)'}
             {autoRefreshEnabled && ' • Auto-refresh enabled'}
           </p>

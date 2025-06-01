@@ -1,4 +1,3 @@
-// src/app/api/tokens/recent/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getRecentTokensFromSQL,
@@ -7,36 +6,30 @@ import {
   initializeSQLDB,
 } from '../../../../lib/db/sql';
 
+// Cache the initialization status to avoid repeated connections
+let isInitialized = false;
+
 export async function GET(request: NextRequest) {
   try {
-    // Parse query parameters
     const { searchParams } = new URL(request.url);
-    const after = searchParams.get('after');
     const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 50;
     const includeStats = searchParams.get('stats') === 'true';
 
-    // Initialize SQLite
-    const sqliteInitialized = await initializeSQLDB();
-    if (!sqliteInitialized) {
-      return NextResponse.json({ error: 'Failed to initialize SQLite database' }, { status: 500 });
-    }
-
-    let tokens: any = [];
-
-    if (after) {
-      // Get tokens created after a specific timestamp
-      tokens = await getTokensAfterFromSQL(after);
-
-      // Limit the results if specified
-      if (limit > 0 && tokens.length > limit) {
-        tokens = tokens.slice(0, limit);
+    // Initialize DB once
+    if (!isInitialized) {
+      const sqliteInitialized = await initializeSQLDB();
+      if (!sqliteInitialized) {
+        return NextResponse.json(
+          { error: 'Failed to initialize SQLite database' },
+          { status: 500 }
+        );
       }
-    } else if (limit > 0) {
-      // Get recent tokens with limit
-      tokens = await getRecentTokensFromSQL(limit);
+      isInitialized = true;
     }
 
-    // Get stats if requested
+    // Just get the most recent tokens, forget timestamps
+    const tokens = await getRecentTokensFromSQL(limit);
+
     let stats = null;
     if (includeStats) {
       stats = await getTokenStatsFromSQL();

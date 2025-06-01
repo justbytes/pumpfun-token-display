@@ -337,6 +337,8 @@ class SQLDatabase {
       const stmt = this.db.prepare(sql);
       const rows = stmt.all(timestamp);
 
+      console.log(`📊 SQL Result - Found ${rows.length} tokens after ${timestamp}`);
+
       return rows.map((row: any) => ({
         ...row,
         complete: Boolean(row.complete),
