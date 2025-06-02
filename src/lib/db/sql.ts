@@ -250,7 +250,7 @@ class SQLDatabase {
   /**
    * Get all tokens with optional filtering and pagination
    */
-  async getAllTokens(options?: {
+  async getAllTokensSQlite(options?: {
     limit?: number;
     offset?: number;
     searchTerm?: string;
@@ -319,7 +319,7 @@ class SQLDatabase {
    * Get recent tokens (for frontend polling)
    */
   async getRecentTokens(limit: number = 50): Promise<TokenDocument[]> {
-    return this.getAllTokens({
+    return this.getAllTokensSQlite({
       limit,
       orderBy: 'createdAt',
       orderDirection: 'DESC',
@@ -430,7 +430,7 @@ export async function getAllTokensFromSQL(options?: {
   searchTerm?: string;
   complete?: boolean;
 }): Promise<TokenDocument[]> {
-  return await sqlDB.getAllTokens(options);
+  return await sqlDB.getAllTokensSQlite(options);
 }
 
 export async function getRecentTokensFromSQL(limit: number = 50): Promise<TokenDocument[]> {

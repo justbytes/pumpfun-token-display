@@ -8,20 +8,12 @@ A custom real-time pumpfun token indexer leveraging Helius, Next.js, React, and 
 
 You will need a MongoDB URI along with a Helius RPC URL and API key. Get these and put them in the `.env` file using the `example-env` file for reference.
 
-- #### Note: You can run this with the free tier on Helius but getting all of the tokens is resource intensive and can use up to 500k credit units.
+- #### Note: You can run this with the free tier on Helius but getting all of the tokens is resource intensive and could use up to 500k credit units.
 
 ### Install dependencies
 
-If you don't have `pnpm` installed run:
-
 ```
-npm install -g pnpm
-```
-
-Then install packages with:
-
-```
-pnpm install
+npm install
 ```
 
 ### Setup the PumpfunTokenFetcher main()

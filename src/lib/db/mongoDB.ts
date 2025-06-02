@@ -164,7 +164,7 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
 }
 
 // Get all tokens (with optional filters)
-export async function getAllTokens(filter?: {
+export async function getAllTokensMongoDB(filter?: {
   name?: string;
   symbol?: string;
   complete?: boolean;
@@ -261,7 +261,7 @@ export async function insertToken(token: TokenDocument): Promise<boolean> {
 }
 
 // Get token statistics
-export async function getTokenStats(): Promise<{
+export async function getMongoTokenStats(): Promise<{
   totalTokens: number;
   completedBondingCurves: number;
   activeBondingCurves: number;
@@ -391,7 +391,7 @@ async function loadTokenListToDatabase() {
 
     // Get current database stats
     console.log('📊 Current database stats:');
-    const tokenStats = await getTokenStats();
+    const tokenStats = await getMongoTokenStats();
 
     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
     console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
@@ -412,7 +412,7 @@ async function loadTokenListToDatabase() {
 
     // Get updated database stats
     console.log('\n📊 Updated database stats:');
-    const updatedTokenStats = await getTokenStats();
+    const updatedTokenStats = await getMongoTokenStats();
     console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
     console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
     console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);

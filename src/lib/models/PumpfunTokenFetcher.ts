@@ -10,9 +10,12 @@ import {
   initializeDbConnection,
   createTokenIndexes,
   insertTokensBatch,
-  getTokenStats,
+  getMongoTokenStats,
   insertToken,
+  getDbConnection,
 } from '../db/mongoDB';
+// Add SQLite imports
+import { initializeSQLDB, insertTokensBatchToSQL, sqlDB } from '../db/sql';
 
 dotenv.config();
 
@@ -434,21 +437,48 @@ class PumpFunTokenFetcher {
   }
 
   // Get all of the bonding curves from sqlite db
-  async getAllBondingCurveAddresses() {
-    console.log('Not yet implemented');
-    return [];
+  async getAllBondingCurveAddresses(): Promise<string[]> {
+    try {
+      const db = getDbConnection();
+      const collection = db.collection<TokenDocument>('tokens');
+
+      // Check if collection exists and has documents
+      const documentCount = await collection.countDocuments();
+
+      if (documentCount === 0) {
+        console.log('📋 No tokens found in database');
+        return [];
+      }
+
+      // Get distinct bonding curve addresses from the tokens collection
+      const addresses = await collection.distinct('bondingCurveAddress');
+
+      console.log(`📋 Found ${addresses.length} existing bonding curve addresses in database`);
+      return addresses;
+    } catch (error) {
+      console.error('❌ Error getting bonding curve addresses from database:', error);
+      throw new Error('Something went wrong trying to get all bonding curves from MongoDB');
+    }
   }
 
   /**
    * Update token list using database instead of file system
    * This processes only new bonding curves that haven't been processed yet
    */
-  async updateTokenList(): Promise<void> {
-    await this.initializeDatabase();
+  async getFreshTokenList(): Promise<void> {
+    // Initialize both databases
+    console.log('🔄 Initializing databases...');
+    await this.initializeDatabase(); // MongoDB
 
+    const sqlInitialized = await initializeSQLDB(); // SQLite
+    if (!sqlInitialized) {
+      throw new Error('Failed to initialize SQLite database');
+    }
+
+    console.log('✅ Both databases initialized successfully');
     console.log('🔄 Starting incremental update process...');
 
-    // Get all current bonding curves from Helius
+    // Get all bonding curves using the Helius
     const allCurrentBondingCurves = await this.getAllBondingCurves();
     if (!allCurrentBondingCurves) {
       throw new Error('Failed to fetch current bonding curves');
@@ -461,7 +491,7 @@ class PumpFunTokenFetcher {
       (bonding: { pubkey: string }) => bonding.pubkey
     );
 
-    // Get existing addresses from database
+    // Get existing addresses from MongoDB (using as primary source)
     const existingAddresses = await this.getAllBondingCurveAddresses();
     console.log(`📋 Found ${existingAddresses.length} previously processed addresses in database`);
 
@@ -477,7 +507,6 @@ class PumpFunTokenFetcher {
       return;
     }
 
-    // Process tokens in batches
     const BATCH_SIZE = 100;
     let processedCount = 0;
     let tokenBatch: TokenDocument[] = [];
@@ -497,12 +526,22 @@ class PumpFunTokenFetcher {
         // Process batch when it reaches BATCH_SIZE or at the end
         if (tokenBatch.length >= BATCH_SIZE || i === newAddresses.length - 1) {
           if (tokenBatch.length > 0) {
-            console.log(`💾 Storing batch of ${tokenBatch.length} tokens to database...`);
-            const result = await insertTokensBatch(tokenBatch);
+            console.log(`💾 Storing batch of ${tokenBatch.length} tokens to both databases...`);
+
+            // Insert to MongoDB
+            const mongoResult = await insertTokensBatch(tokenBatch);
             console.log(
-              `   Inserted: ${result.inserted}, Duplicates: ${result.duplicates}, Errors: ${result.errors}`
+              `   MongoDB - Inserted: ${mongoResult.inserted}, Duplicates: ${mongoResult.duplicates}, Errors: ${mongoResult.errors}`
             );
-            tokenBatch = []; // Clear the batch for next round
+
+            // Insert to SQLite
+            const sqliteResult = await insertTokensBatchToSQL(tokenBatch);
+            console.log(
+              `   SQLite - Inserted: ${sqliteResult.inserted}, Duplicates: ${sqliteResult.duplicates}, Errors: ${sqliteResult.errors}`
+            );
+
+            // Clear the batch for next round
+            tokenBatch = [];
           }
 
           console.log(`📊 Progress: ${processedCount}/${newAddresses.length} new tokens processed`);
@@ -512,58 +551,45 @@ class PumpFunTokenFetcher {
           `❌ Error processing bonding curve at index ${i} (${newAddresses[i]}):`,
           error
         );
-        // Continue processing even if one fails
+        continue;
       }
     }
 
     console.log(
       `✅ Completed incremental update! Processed ${processedCount} new tokens out of ${newAddresses.length} new bonding curves.`
     );
+
+    // Display final stats from both databases
+    await this.displayDatabaseStats();
   }
 
   /**
-   * Process a specific list of bonding curve addresses and store tokens to database
-   * @param addresses - Array of bonding curve addresses to process
+   * Gets number of tokens from the databases and prints it the console
    */
-  async processBondingCurvesToDatabase(addresses: string[]): Promise<void> {
-    await this.initializeDatabase();
+  private async displayDatabaseStats(): Promise<void> {
+    try {
+      console.log('\n📊 Final Database Statistics:');
 
-    const BATCH_SIZE = 100;
-    let tokenBatch: TokenDocument[] = [];
-    let processedCount = 0;
-
-    console.log(`🚀 Starting to process ${addresses.length} bonding curves...`);
-
-    for (let i = 0; i < addresses.length; i++) {
-      try {
-        console.log(`Processing ${i + 1}/${addresses.length} - Address: ${addresses[i]}`);
-
-        const tokenData = await this.getDataWithBondingCurveAddress(addresses[i]);
-        if (tokenData) {
-          tokenBatch.push(tokenData);
-          processedCount++;
-        }
-
-        // Process batch when it reaches BATCH_SIZE or at the end
-        if (tokenBatch.length >= BATCH_SIZE || i === addresses.length - 1) {
-          if (tokenBatch.length > 0) {
-            console.log(`💾 Storing batch of ${tokenBatch.length} tokens to database...`);
-            const result = await insertTokensBatch(tokenBatch);
-            console.log(
-              `   Inserted: ${result.inserted}, Duplicates: ${result.duplicates}, Errors: ${result.errors}`
-            );
-            tokenBatch = []; // Clear the batch for next round
-          }
-
-          console.log(`📊 Progress: ${processedCount}/${addresses.length} tokens processed`);
-        }
-      } catch (error) {
-        console.error(`❌ Error processing bonding curve at index ${i} (${addresses[i]}):`, error);
-        // Continue processing even if one fails
+      // MongoDB stats
+      const mongoStats = await getMongoTokenStats();
+      if (mongoStats) {
+        console.log('   MongoDB:');
+        console.log(`     Total tokens: ${mongoStats.totalTokens}`);
+        console.log(`     Completed bonding curves: ${mongoStats.completedBondingCurves}`);
+        console.log(`     Active bonding curves: ${mongoStats.activeBondingCurves}`);
       }
-    }
 
-    console.log(`✅ Completed processing! Successfully processed ${processedCount} tokens!`);
+      // SQLite stats
+      const sqliteStats = await sqlDB.getTokenStats();
+      if (sqliteStats) {
+        console.log('   SQLite:');
+        console.log(`     Total tokens: ${sqliteStats.totalTokens}`);
+        console.log(`     Completed bonding curves: ${sqliteStats.completedBondingCurves}`);
+        console.log(`     Active bonding curves: ${sqliteStats.activeBondingCurves}`);
+      }
+    } catch (error) {
+      console.error('❌ Error displaying database stats:', error);
+    }
   }
 }
 
