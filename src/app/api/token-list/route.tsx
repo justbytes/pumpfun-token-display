@@ -1,12 +1,7 @@
 // src/app/api/token-list/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTokens, initializeDbConnection } from '../../../lib/db/mongoDB';
-import {
-  getAllTokensFromSQL,
-  initializeSQLDB,
-  getTokenCountFromSQL,
-  getTokenStatsFromSQL,
-} from '../../../lib/db/sqlite';
+import { getAllTokensMongoDB, initializeMongoDb } from '../../../lib/db/mongoDB';
+import { getAllTokensFromSQL, initializeSQLDB, getTokenCountFromSQL } from '../../../lib/db/sqlite';
 
 export async function GET(request: NextRequest) {
   try {
@@ -89,7 +84,7 @@ async function fetchFromMongoDB() {
     console.log('📊 Fetching tokens from MongoDB...');
 
     // Initialize MongoDB connection
-    const connected = await initializeDbConnection();
+    const connected = await initializeMongoDb();
     if (!connected) {
       return NextResponse.json({ error: 'Failed to connect to MongoDB' }, { status: 500 });
     }
@@ -97,7 +92,7 @@ async function fetchFromMongoDB() {
     const startTime = performance.now();
 
     // Get all tokens from MongoDB
-    const tokens = await getAllTokens();
+    const tokens = await getAllTokensMongoDB();
 
     const endTime = performance.now();
     const queryTime = Math.round(endTime - startTime);

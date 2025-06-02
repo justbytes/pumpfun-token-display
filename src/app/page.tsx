@@ -26,12 +26,6 @@ interface PaginationInfo {
   endIndex: number;
 }
 
-interface TokenStats {
-  totalTokens: number;
-  completedBondingCurves: number;
-  activeBondingCurves: number;
-}
-
 export default function Home() {
   // State management
   const [allTokens, setAllTokens] = useState<Token[]>([]);
@@ -41,14 +35,10 @@ export default function Home() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dataLoadTime, setDataLoadTime] = useState<Date | null>(null);
   const [newTokensCount, setNewTokensCount] = useState(0);
-  const [stats, setStats] = useState<TokenStats | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const [lastPollTime, setLastPollTime] = useState<string | null>(null);
   const [dataSource, setDataSource] = useState<'sqlite' | 'mongodb'>('sqlite');
 
   // New refresh-related state
-  const [showNewTokenBanner, setShowNewTokenBanner] = useState(false);
-  const [pendingRefresh, setPendingRefresh] = useState(false);
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
@@ -60,7 +50,6 @@ export default function Home() {
 
   const TOKENS_PER_PAGE = 50;
   const POLLING_INTERVAL = 1000; // 1 second for better-sqlite3 (much faster)
-  const AUTO_REFRESH_DELAY = 3000; // 3 seconds before auto-refreshing
   const NEW_TOKEN_THRESHOLD = 5; // Show banner after 5 new tokens
 
   // Poll for new tokens
@@ -79,8 +68,6 @@ export default function Home() {
       const data = await response.json();
 
       if (data.success && data.tokens && data.tokens.length > 0) {
-        console.log(`📦 Got ${data.tokens.length} recent tokens from API`);
-
         // Add any tokens we don't already have
         setAllTokens(prevTokens => {
           const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
@@ -91,10 +78,7 @@ export default function Home() {
           );
 
           if (newTokens.length > 0) {
-            console.log(`🆕 Adding ${newTokens.length} new tokens to display`);
-
             setNewTokensCount(prev => prev + newTokens.length);
-            setShowNewTokenBanner(true);
 
             // Add new tokens to the front of the list
             return [...newTokens, ...prevTokens];
@@ -107,6 +91,7 @@ export default function Home() {
       console.error('❌ Polling error:', error);
     }
   }, []);
+
   // Start polling for new tokens
   const startPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
@@ -117,7 +102,7 @@ export default function Home() {
     console.log('🔄 Starting token polling...');
     setIsPolling(true);
     const now = new Date().toISOString();
-    setLastPollTime(now);
+
     lastPollTimeRef.current = now; // Set both state and ref
 
     pollingIntervalRef.current = setInterval(() => {
@@ -126,37 +111,6 @@ export default function Home() {
       }
     }, POLLING_INTERVAL);
   }, [pollForNewTokens]);
-
-  // const usePolling = (pollingFunction: () => Promise<void>, interval: number, enabled: boolean) => {
-  //   const savedCallback = useRef<() => Promise<void>>();
-  //   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-
-  //   // Remember the latest callback
-  //   useEffect(() => {
-  //     savedCallback.current = pollingFunction;
-  //   }, [pollingFunction]);
-
-  //   // Set up the interval
-  //   useEffect(() => {
-  //     function tick() {
-  //       if (savedCallback.current) {
-  //         savedCallback.current();
-  //       }
-  //     }
-
-  //     if (enabled && interval > 0) {
-  //       intervalRef.current = setInterval(tick, interval);
-  //       return () => {
-  //         if (intervalRef.current) {
-  //           clearInterval(intervalRef.current);
-  //           intervalRef.current = null;
-  //         }
-  //       };
-  //     }
-  //   }, [interval, enabled]);
-
-  //   return intervalRef;
-  // };
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -174,8 +128,6 @@ export default function Home() {
 
     // Clear new token indicators
     setNewTokensCount(0);
-    setShowNewTokenBanner(false);
-    setPendingRefresh(false);
 
     // Clear auto-refresh timeout
     if (autoRefreshTimeoutRef.current) {
@@ -214,7 +166,7 @@ export default function Home() {
         setAllTokens(data.tokens);
         setDataLoadTime(new Date());
         setNewTokensCount(0);
-        setShowNewTokenBanner(false);
+
         console.log(`✅ Refreshed ${data.tokens.length} tokens`);
       } else {
         throw new Error(data.error || 'Failed to fetch tokens');
@@ -227,7 +179,7 @@ export default function Home() {
         setTimeout(() => {
           console.log('🔄 Resuming token polling...');
           setIsPolling(true);
-          setLastPollTime(new Date().toISOString());
+
           pollingIntervalRef.current = setInterval(() => {
             pollForNewTokens();
           }, POLLING_INTERVAL);
@@ -240,124 +192,61 @@ export default function Home() {
       setLoading(false);
     }
   }, [currentPage, isPolling, dataSource, pollForNewTokens]);
-  const handleBannerRefresh = useCallback(() => {
-    console.log('🔄 Banner refresh clicked - scrolling to top and clearing indicators...');
-
-    // Clear new token indicators
-    setNewTokensCount(0);
-    setShowNewTokenBanner(false);
-    setPendingRefresh(false);
-
-    // Clear auto-refresh timeout
-    if (autoRefreshTimeoutRef.current) {
-      clearTimeout(autoRefreshTimeoutRef.current);
-      autoRefreshTimeoutRef.current = null;
-    }
-
-    // Scroll to top to show the new tokens that are already in the list
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-
-    // If not on first page, go to first page to see the new tokens
-    if (currentPage !== 1) {
-      setCurrentPage(1);
-    }
-
-    // Clear search if active to see all tokens
-    if (searchTerm) {
-      setSearchTerm('');
-    }
-
-    setLastRefreshTime(new Date());
-  }, [currentPage, searchTerm]);
-
-  // Dismiss new token banner
-  const dismissBanner = useCallback(() => {
-    setShowNewTokenBanner(false);
-    setNewTokensCount(0);
-
-    // Clear pending auto-refresh
-    if (autoRefreshTimeoutRef.current) {
-      clearTimeout(autoRefreshTimeoutRef.current);
-      autoRefreshTimeoutRef.current = null;
-    }
-    setPendingRefresh(false);
-  }, []);
 
   // Fetch all tokens from the specified source
-  const fetchAllTokens = useCallback(
-    async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        console.log(`Fetching all tokens from ${source.toUpperCase()}...`);
-        const startTime = performance.now();
-
-        const response = await fetch(`/api/token-list?source=${source}`);
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (data.success) {
-          const endTime = performance.now();
-          const loadTime = Math.round(endTime - startTime);
-
-          setAllTokens(data.tokens);
-          setDataLoadTime(new Date());
-          setNewTokensCount(0);
-          setDataSource(source);
-          setShowNewTokenBanner(false);
-
-          console.log(
-            `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${
-              data.queryTime
-            }`
-          );
-          console.log(`📊 Total transfer time: ${loadTime}ms`);
-
-          // Start polling if using SQLite
-          if (source === 'sqlite') {
-            startPolling();
-          }
-        } else {
-          throw new Error(data.error || 'Failed to fetch tokens');
-        }
-      } catch (error) {
-        console.error('Error fetching tokens:', error);
-        setError('Failed to fetch tokens. Please try again.');
-
-        // If SQLite fails, try MongoDB as fallback
-        if (source === 'sqlite') {
-          console.log('🔄 SQLite failed, falling back to MongoDB...');
-          try {
-            await fetchAllTokens('mongodb');
-            return;
-          } catch (mongoError) {
-            console.error('MongoDB fallback also failed:', mongoError);
-          }
-        }
-      } finally {
-        setLoading(false);
-      }
-    },
-    [startPolling]
-  );
-
-  // Fetch token stats
-  const fetchStats = useCallback(async () => {
+  const fetchAllTokens = useCallback(async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
     try {
-      const response = await fetch('/api/tokens/recent?stats=true&limit=0');
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.stats) {
-          setStats(data.stats);
+      setLoading(true);
+      setError(null);
+
+      console.log(`Fetching all tokens from ${source.toUpperCase()}...`);
+      const startTime = performance.now();
+
+      const response = await fetch(`/api/token-list?source=${source}`);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        const endTime = performance.now();
+        const loadTime = Math.round(endTime - startTime);
+
+        setAllTokens(data.tokens);
+        setDataLoadTime(new Date());
+        setNewTokensCount(0);
+        setDataSource(source);
+
+        console.log(
+          `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${data.queryTime}`
+        );
+        console.log(`📊 Total transfer time: ${loadTime}ms`);
+
+        // Start polling if using SQLite
+        if (source === 'sqlite') {
+          startPolling();
         }
+      } else {
+        throw new Error(data.error || 'Failed to fetch tokens');
       }
     } catch (error) {
-      console.warn('Failed to fetch stats:', error);
+      console.error('Error fetching tokens:', error);
+      setError('Failed to fetch tokens. Please try again.');
+
+      // If SQLite fails, try MongoDB as fallback
+      if (source === 'sqlite') {
+        console.log('🔄 SQLite failed, falling back to MongoDB...');
+        try {
+          await fetchAllTokens('mongodb');
+          return;
+        } catch (mongoError) {
+          console.error('MongoDB fallback also failed:', mongoError);
+        }
+      }
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -406,7 +295,6 @@ export default function Home() {
 
     const initializeApp = async () => {
       await fetchAllTokens('sqlite'); // Default to SQLite
-      await fetchStats();
 
       // Start polling after initial load if using SQLite
       if (dataSource === 'sqlite') {
@@ -428,11 +316,7 @@ export default function Home() {
   // Reset to page 1 when search changes
   useEffect(() => {
     setCurrentPage(1);
-    // Dismiss banner when searching
-    if (searchTerm) {
-      dismissBanner();
-    }
-  }, [searchTerm, dismissBanner]);
+  }, [searchTerm]);
 
   // Event handlers
   const handlePrevPage = () => {
@@ -518,8 +402,8 @@ export default function Home() {
         // Always show first page
         pages.push(1);
 
-        let start = Math.max(2, currentPage - 1);
-        let end = Math.min(totalPages - 1, currentPage + 1);
+        const start = Math.max(2, currentPage - 1);
+        const end = Math.min(totalPages - 1, currentPage + 1);
 
         // Add ellipsis if needed
         if (start > 2) {
@@ -755,7 +639,7 @@ export default function Home() {
         {searchTerm && (
           <div className="text-center mb-6">
             <p className="text-gray-600 dark:text-gray-400">
-              {filteredTokens.length.toLocaleString()} results for "{searchTerm}"
+              {filteredTokens.length.toLocaleString()} results for &quot;{searchTerm}&quot;
             </p>
           </div>
         )}
@@ -767,7 +651,14 @@ export default function Home() {
         {paginatedTokens.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-6 mb-8">
             {paginatedTokens.map(token => (
-              <TokenCard key={token.tokenAddress} token={token} />
+              <TokenCard
+                key={token.tokenAddress}
+                tokenAddress={token.tokenAddress}
+                name={token.name}
+                symbol={token.symbol}
+                description={token.description}
+                image={token.image}
+              />
             ))}
           </div>
         ) : searchTerm ? (
@@ -777,7 +668,7 @@ export default function Home() {
               No Results Found
             </h3>
             <p className="text-gray-500 dark:text-gray-400 mb-4">
-              No tokens found matching "{searchTerm}"
+              No tokens found matching &quot;{searchTerm}&quot;
             </p>
             <button
               onClick={() => setSearchTerm('')}

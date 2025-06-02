@@ -1,16 +1,43 @@
 // src/lib/models/PumpfunEventListener.ts
 
 import { Connection, PublicKey } from '@solana/web3.js';
-import { BorshCoder } from '@coral-xyz/anchor';
-const fs = require('fs');
-const path = require('path');
+import { BorshCoder, Idl } from '@coral-xyz/anchor';
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
 
-import { Token, TokenMetadata } from '../types/types';
+import { TokenMetadata } from '../types/types';
 import { insertToken } from '../db/mongoDB';
 import { insertTokenToSQL, initializeSQLDB } from '../db/sqlite';
 
 dotenv.config();
+
+interface TokenDocument {
+  bondingCurveAddress: string;
+  complete: boolean;
+  creator: string;
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  uri: string;
+  description: string;
+  image: string;
+}
+
+interface CreateEvent {
+  name: string;
+  symbol: string;
+  uri: string;
+  mint: string;
+  bonding_curve: string;
+  user: string;
+  creator: string;
+  timestamp: string;
+  virtual_token_reserves: string;
+  virtual_sol_reserves: string;
+  real_token_reserves: string;
+  token_total_supply: string;
+}
 
 // CreateEvent discriminator from your IDL
 const CREATE_EVENT_DISCRIMINATOR = Buffer.from([27, 114, 169, 77, 222, 235, 99, 118]);
@@ -21,13 +48,13 @@ class PumpFunEventListener {
   private logSubscriptionId: number | null = null;
   private newTokens: string[] = [];
   private sqliteInitialized: boolean = false;
-  private mongoQueue: any[] = []; // Queue for MongoDB updates
+  private mongoQueue: TokenDocument[] = []; // Queue for MongoDB updates
   private mongoUpdateInterval: NodeJS.Timeout | null = null;
 
   /**
    * Constructor
    */
-  constructor(idl: any) {
+  constructor(idl: Idl) {
     // Create the connection
     this.connection = new Connection(`${process.env.HELIUS_RPC_URL}`, {
       commitment: 'confirmed',
@@ -43,7 +70,7 @@ class PumpFunEventListener {
   /**
    * Helper function to safely convert Solana/Anchor data types to strings
    */
-  private safeStringify(value: any): string {
+  private safeStringify(value: unknown): string {
     if (value === null || value === undefined) {
       return '';
     }
@@ -56,8 +83,13 @@ class PumpFunEventListener {
       return String(value);
     }
 
-    // Handle PublicKey objects
-    if (value && typeof value === 'object' && value.toString) {
+    // Handle PublicKey objects or any object with toString method
+    if (
+      value &&
+      typeof value === 'object' &&
+      'toString' in value &&
+      typeof value.toString === 'function'
+    ) {
       try {
         return value.toString();
       } catch (error) {
@@ -75,7 +107,7 @@ class PumpFunEventListener {
     if (Array.isArray(value)) {
       try {
         return JSON.stringify(value);
-      } catch (error) {
+      } catch {
         return '';
       }
     }
@@ -84,7 +116,7 @@ class PumpFunEventListener {
     if (typeof value === 'object') {
       try {
         return JSON.stringify(value);
-      } catch (error) {
+      } catch {
         return String(value);
       }
     }
@@ -168,11 +200,11 @@ class PumpFunEventListener {
 
       this.logSubscriptionId = this.connection.onLogs(
         programId,
-        (logs, context) => {
+        logs => {
           // Look for event logs
           for (const log of logs.logs) {
             if (log.includes('Program data:')) {
-              this.parseEventFromLog(log, logs.signature);
+              this.parseEventFromLog(log);
             }
           }
         },
@@ -188,7 +220,7 @@ class PumpFunEventListener {
   /**
    * Parse event from log
    */
-  private parseEventFromLog(logLine: string, signature: string) {
+  private parseEventFromLog(logLine: string) {
     try {
       // Extract base64 data from log line
       const dataMatch = logLine.match(/Program data: (.+)/);
@@ -203,15 +235,11 @@ class PumpFunEventListener {
         const discriminator = eventData.subarray(0, 8);
 
         if (discriminator.equals(CREATE_EVENT_DISCRIMINATOR)) {
-          console.log('\n🎉 CreateEvent discriminator matched!');
-          console.log('📝 Signature:', signature);
-
           try {
             // Use the original base64 string for decoding
             const decodedEvent = this.coder.events.decode(base64Data);
 
             if (decodedEvent && decodedEvent.name === 'CreateEvent') {
-              console.log('✅ Successfully decoded CreateEvent');
               this.processCreateEvent(decodedEvent.data);
             }
           } catch (decodeError) {
@@ -252,21 +280,8 @@ class PumpFunEventListener {
   /**
    * Process CreateEvent - now writes immediately to SQLite and queues for MongoDB
    */
-  private async processCreateEvent(event: any) {
-    const {
-      name,
-      symbol,
-      uri,
-      mint,
-      bonding_curve,
-      user,
-      creator,
-      timestamp,
-      virtual_token_reserves,
-      virtual_sol_reserves,
-      real_token_reserves,
-      token_total_supply,
-    } = event;
+  private async processCreateEvent(event: CreateEvent) {
+    const { name, symbol, uri, mint, bonding_curve, creator } = event;
 
     console.log(`\n🚀 New token created: ${name} (${symbol})`);
 
@@ -279,13 +294,6 @@ class PumpFunEventListener {
       bonding_curve: this.safeStringify(bonding_curve),
       creator: this.safeStringify(creator),
     };
-
-    console.log('🔧 Converted token data:', {
-      name: safeTokenData.name,
-      symbol: safeTokenData.symbol,
-      tokenAddress: safeTokenData.mint,
-      bondingCurveAddress: safeTokenData.bonding_curve,
-    });
 
     // Get metadata (only if URI is valid)
     let uriMeta = null;
@@ -308,7 +316,6 @@ class PumpFunEventListener {
 
     try {
       // 1. Immediately write to SQLite for fast access
-      console.log('💾 Writing token to SQLite...');
       const sqliteSuccess = await insertTokenToSQL(tokenDocument);
 
       if (sqliteSuccess) {
@@ -404,14 +411,11 @@ class PumpFunEventListener {
           symbol: metadata.symbol || 'UNKNOWN',
           uri: uri,
           description: metadata.description || '', // PumpFun often has empty descriptions
-          image: this.extractImageUrl(metadata),
+          image: metadata.image,
         };
 
         return tokenMetadata;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        console.warn(`❌ Attempt ${attempt + 1} failed for URI ${uri}: ${errorMessage}`);
-
+      } catch {
         if (attempt < maxRetries - 1) {
           const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
           console.log(`⏱️ Waiting ${delay}ms before retry...`);
@@ -423,52 +427,11 @@ class PumpFunEventListener {
     console.error(`❌ Failed to fetch metadata from URI after ${maxRetries} attempts: ${uri}`);
     return null;
   }
-
-  /**
-   * Extract image URL from metadata JSON, handling PumpFun format
-   * @param {any} metadata - The parsed metadata JSON
-   * @returns {string} - The image URL or empty string
-   */
-  private extractImageUrl(metadata: any): string {
-    // PumpFun uses a simple 'image' field directly
-    if (metadata.image && typeof metadata.image === 'string') {
-      return metadata.image;
-    }
-
-    // Fallback: check other common image field names
-    const imageFields = ['image_uri', 'logo', 'logoURI', 'icon'];
-
-    for (const field of imageFields) {
-      if (metadata[field] && typeof metadata[field] === 'string') {
-        return metadata[field];
-      }
-    }
-
-    // Check in nested properties object (some tokens store extra data here)
-    if (metadata.properties) {
-      for (const field of ['image', ...imageFields]) {
-        if (metadata.properties[field] && typeof metadata.properties[field] === 'string') {
-          return metadata.properties[field];
-        }
-      }
-    }
-
-    // Check in files array (common for NFT-style metadata)
-    if (metadata.files && Array.isArray(metadata.files) && metadata.files.length > 0) {
-      const firstFile = metadata.files[0];
-      if (firstFile.uri || firstFile.url) {
-        return firstFile.uri || firstFile.url;
-      }
-    }
-
-    console.log('⚠️ No image URL found in metadata');
-    return '';
-  }
 }
 
 export const startCreateEventListener = async () => {
   const PUMPFUN_IDL_JSON = path.join(__dirname, '../idls/pumpfun_idl.json');
-  const PUMPFUN_IDL_DATA = fs.readFileSync(PUMPFUN_IDL_JSON);
+  const PUMPFUN_IDL_DATA = fs.readFileSync(PUMPFUN_IDL_JSON, 'utf8');
   const PUMPFUN_IDL = JSON.parse(PUMPFUN_IDL_DATA);
 
   const listener = new PumpFunEventListener(PUMPFUN_IDL);

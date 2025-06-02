@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   getRecentTokensFromSQL,
-  getTokensAfterFromSQL,
   getTokenStatsFromSQL,
   initializeSQLDB,
 } from '../../../../lib/db/sqlite';

@@ -1,8 +1,8 @@
 // src/lib/utils/dataSyncUtility.ts - Updated for better-sqlite3
 import {
   getAllTokensMongoDB,
-  initializeMongoDb as initMongoDB,
-  getMongoTokenStats as getMongoStats,
+  initializeMongoDb,
+  getMongoTokenStats,
   insertTokensBatchMongoDB,
 } from '../db/mongoDB';
 import { initializeSQLDB, insertTokensBatchToSQL, sqlDB, getTokenStatsFromSQL } from '../db/sqlite';
@@ -18,12 +18,24 @@ interface SyncResult {
   duration: number;
 }
 
+interface TokenDocument {
+  bondingCurveAddress: string;
+  complete: boolean;
+  creator: string;
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  uri: string;
+  description: string;
+  image: string;
+}
+
 /**
  * Convert MongoDB token to SQLite format (handles BigNumber objects)
  */
-function format(token: any): any {
+function format(token: TokenDocument): TokenDocument {
   // Helper function to safely convert values, especially BigNumber objects
-  const safeString = (value: any): string => {
+  const safeString = (value: unknown): string => {
     if (value === null || value === undefined) {
       return '';
     }
@@ -32,12 +44,20 @@ function format(token: any): any {
       return value;
     }
 
+    if (typeof value === 'number' || typeof value === 'bigint') {
+      return String(value);
+    }
+
     // Handle BigNumber objects (they have a _bn property or words array)
     if (value && typeof value === 'object') {
+      const obj = value as Record<string, unknown>;
+
       // If it's a BigNumber-like object, try to convert to string
-      if (value._bn || value.words || value.toString) {
+      if ('_bn' in obj || 'words' in obj || 'toString' in obj) {
         try {
-          return value.toString();
+          if (typeof obj.toString === 'function') {
+            return obj.toString();
+          }
         } catch (error) {
           console.warn('Failed to convert BigNumber to string:', error);
           return '';
@@ -47,7 +67,7 @@ function format(token: any): any {
       // If it's any other object, stringify it
       try {
         return JSON.stringify(value);
-      } catch (error) {
+      } catch {
         return String(value);
       }
     }
@@ -75,7 +95,7 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
   console.log('🔄 Starting SQLite to MongoDB sync...');
   const startTime = performance.now();
 
-  let result: SyncResult = {
+  const result: SyncResult = {
     success: false,
     mongoTokens: 0,
     sqliteTokensBefore: 0,
@@ -90,7 +110,10 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
     // Initialize both databases
     console.log('🔌 Initializing database connections...');
 
-    const [mongoConnected, sqliteConnected] = await Promise.all([initMongoDB(), initializeSQLDB()]);
+    const [mongoConnected, sqliteConnected] = await Promise.all([
+      initializeMongoDb(),
+      initializeSQLDB(),
+    ]);
 
     if (!mongoConnected) {
       throw new Error('Failed to connect to MongoDB');
@@ -101,7 +124,7 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
     }
 
     // Get current MongoDB stats (before sync)
-    const mongoStatsBefore = await getMongoStats();
+    const mongoStatsBefore = await getMongoTokenStats();
     result.mongoTokens = mongoStatsBefore?.totalTokens || 0;
 
     console.log(`📊 Current MongoDB tokens: ${result.mongoTokens}`);
@@ -120,7 +143,7 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
       return result;
     }
 
-    // Convert SQLite format to MongoDB format (simple conversion)
+    // Convert SQLite format to MongoDB format
     console.log('🔧 Converting SQLite tokens to MongoDB format...');
     const tokensForMongoDB = sqliteTokens.map(token => format(token));
 
@@ -165,7 +188,7 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
     result.errors = totalErrors;
 
     // Get final MongoDB stats
-    const mongoStatsAfter = await getMongoStats();
+    const mongoStatsAfter = await getMongoTokenStats();
     result.sqliteTokensAfter = mongoStatsAfter?.totalTokens || 0;
 
     result.success = true;
@@ -197,7 +220,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
   console.log('🔄 Starting MongoDB to SQLite sync...');
   const startTime = performance.now();
 
-  let result: SyncResult = {
+  const result: SyncResult = {
     success: false,
     mongoTokens: 0,
     sqliteTokensBefore: 0,
@@ -212,7 +235,10 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
     // Initialize both databases
     console.log('🔌 Initializing database connections...');
 
-    const [mongoConnected, sqliteConnected] = await Promise.all([initMongoDB(), initializeSQLDB()]);
+    const [mongoConnected, sqliteConnected] = await Promise.all([
+      initializeMongoDb(),
+      initializeSQLDB(),
+    ]);
 
     if (!mongoConnected) {
       throw new Error('Failed to connect to MongoDB');
@@ -244,7 +270,7 @@ export async function syncMongoToSQLite(): Promise<SyncResult> {
 
     // Convert MongoDB format to SQLite format (simple conversion)
     console.log('🔧 Converting MongoDB tokens to SQLite format...');
-    const tokensForSQLite = mongoTokens.map((token: any) => format(token));
+    const tokensForSQLite = mongoTokens.map((token: TokenDocument) => format(token));
 
     console.log(`✅ Converted ${tokensForSQLite.length} tokens`);
 
@@ -323,10 +349,13 @@ export async function checkSyncStatus(): Promise<{
 }> {
   try {
     // Initialize connections
-    await Promise.all([initMongoDB(), initializeSQLDB()]);
+    await Promise.all([initializeMongoDb(), initializeSQLDB()]);
 
     // Get stats from both databases
-    const [mongoStats, sqliteStats] = await Promise.all([getMongoStats(), getTokenStatsFromSQL()]);
+    const [mongoStats, sqliteStats] = await Promise.all([
+      getMongoTokenStats(),
+      getTokenStatsFromSQL(),
+    ]);
 
     const mongoTokens = mongoStats?.totalTokens || 0;
     const sqliteTokens = sqliteStats?.totalTokens || 0;

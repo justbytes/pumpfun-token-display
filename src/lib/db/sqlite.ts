@@ -3,6 +3,19 @@ import Database from 'better-sqlite3';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+interface SQLiteTokenRow {
+  bondingCurveAddress: string;
+  complete: number; // SQLite stores boolean as integer
+  creator: string;
+  tokenAddress: string;
+  name: string;
+  symbol: string;
+  uri: string;
+  description: string;
+  image: string;
+  createdAt?: string;
+}
+
 // Token interface (matches your existing structure)
 interface TokenDocument {
   bondingCurveAddress: string;
@@ -183,9 +196,7 @@ class SQLDatabase {
       // Use transaction for better performance
       const insertStmt = this.db.prepare(insertSQL);
       const updateStmt = this.db.prepare(updateSQL);
-      const checkStmt = this.db.prepare(
-        'SELECT COUNT(*) as count FROM tokens WHERE tokenAddress = ?'
-      );
+      this.db.prepare('SELECT COUNT(*) as count FROM tokens WHERE tokenAddress = ?');
 
       const transaction = this.db.transaction((tokens: TokenDocument[]) => {
         for (const token of tokens) {
@@ -261,8 +272,8 @@ class SQLDatabase {
     if (!this.db) throw new Error('Database not initialized');
 
     try {
-      let sql = 'SELECT * FROM tokens';
-      const params: any[] = [];
+      let sql: string = 'SELECT * FROM tokens';
+      const params: (string | number)[] = [];
       const conditions: string[] = [];
 
       // Add search condition
@@ -302,15 +313,17 @@ class SQLDatabase {
       }
 
       const stmt = this.db.prepare(sql);
-      const rows = stmt.all(params);
+      const rows = stmt.all(params) as SQLiteTokenRow[];
 
       // Convert boolean fields back from integers
-      return rows.map((row: any) => ({
-        ...row,
-        complete: Boolean(row.complete),
-      }));
-    } catch (error) {
-      console.error('❌ Error getting tokens:', error);
+      return rows.map(
+        (row: SQLiteTokenRow): TokenDocument => ({
+          ...row,
+          complete: Boolean(row.complete),
+        })
+      );
+    } catch {
+      console.error('❌ Error getting tokens getting tokens from sqlite db');
       return [];
     }
   }
@@ -329,25 +342,27 @@ class SQLDatabase {
   /**
    * Get tokens created after a specific timestamp
    */
-  async getTokensAfter(timestamp: string): Promise<TokenDocument[]> {
-    if (!this.db) throw new Error('Database not initialized');
+  // async getTokensAfter(timestamp: string): Promise<TokenDocument[]> {
+  //   if (!this.db) throw new Error('Database not initialized');
 
-    try {
-      const sql = 'SELECT * FROM tokens WHERE createdAt > ? ORDER BY createdAt DESC';
-      const stmt = this.db.prepare(sql);
-      const rows = stmt.all(timestamp);
+  //   try {
+  //     const sql = 'SELECT * FROM tokens WHERE createdAt > ? ORDER BY createdAt DESC';
+  //     const stmt = this.db.prepare(sql);
+  //     const rows = stmt.all(timestamp);
 
-      console.log(`📊 SQL Result - Found ${rows.length} tokens after ${timestamp}`);
+  //     console.log(`📊 SQL Result - Found ${rows.length} tokens after ${timestamp}`);
 
-      return rows.map((row: any) => ({
-        ...row,
-        complete: Boolean(row.complete),
-      }));
-    } catch (error) {
-      console.error('❌ Error getting tokens after timestamp:', error);
-      return [];
-    }
-  }
+  //     return rows.map(
+  //       (row: SQLiteTokenRow): TokenDocument => ({
+  //         ...row,
+  //         complete: Boolean(row.complete),
+  //       })
+  //     );
+  //   } catch {
+  //     console.error('❌ Error getting tokens after timestamp');
+  //     return [];
+  //   }
+  // }
 
   /**
    * Get token statistics
@@ -437,9 +452,9 @@ export async function getRecentTokensFromSQL(limit: number = 50): Promise<TokenD
   return await sqlDB.getRecentTokens(limit);
 }
 
-export async function getTokensAfterFromSQL(timestamp: string): Promise<TokenDocument[]> {
-  return await sqlDB.getTokensAfter(timestamp);
-}
+// export async function getTokensAfterFromSQL(timestamp: string): Promise<TokenDocument[]> {
+//   return await sqlDB.getTokensAfter(timestamp);
+// }
 
 export async function getTokenStatsFromSQL(): Promise<TokenStats | null> {
   return await sqlDB.getTokenStats();

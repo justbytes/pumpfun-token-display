@@ -11,7 +11,7 @@ import {
 import * as borsh from '@coral-xyz/borsh';
 import { TOKEN_PROGRAM_ADDRESS } from 'gill/programs/token';
 import dotenv from 'dotenv';
-import { TokenMetadata, BondingCurveData, Token } from '../types/types';
+import { TokenMetadata, BondingCurveData } from '../types/types';
 import {
   getMongoTokenStats,
   getDbConnection,
@@ -22,6 +22,30 @@ import {
 import { initializeSQLDB, insertTokensBatchToSQL, sqlDB } from '../db/sqlite';
 
 dotenv.config();
+
+interface AccountData {
+  lamports: number;
+  owner: string;
+  data: [string, string]; // [data, encoding]
+  executable: boolean;
+  rentEpoch: number;
+  space: number;
+}
+
+interface ProgramAccount {
+  pubkey: string;
+  account: AccountData;
+}
+
+interface GetProgramAccountsResponse {
+  jsonrpc: string;
+  id: string;
+  result?: ProgramAccount[];
+  error?: {
+    code: number;
+    message: string;
+  };
+}
 
 interface TokenDocument {
   bondingCurveAddress: string;
@@ -285,7 +309,7 @@ class PumpFunTokenFetcher {
           description: asset.content?.metadata?.description || '',
           image: asset.content?.files?.[0]?.uri || '',
         };
-      } catch (error) {
+      } catch {
         console.error(`❌ Network error fetching metadata (attempt ${attempt + 1}):`);
 
         if (attempt < maxRetries) {
@@ -314,7 +338,7 @@ class PumpFunTokenFetcher {
       const mint = address(tokenAddress);
 
       // Use your existing pattern to get bonding curve
-      const [bondingCurve, _bondingBump] = await getProgramDerivedAddress({
+      const [bondingCurve, ,] = await getProgramDerivedAddress({
         seeds: ['bonding-curve', getAddressEncoder().encode(mint)],
         programAddress: address(PUMPFUN_PROGRAM_ID),
       });
@@ -388,7 +412,7 @@ class PumpFunTokenFetcher {
    * Uses the helius getProgramAccounts endpoint and filters by the bonding curve discriminator
    * which will return all of the bonding curve accounts
    */
-  async getBondingCurvesFromProgramAccounts(): Promise<any> {
+  async getBondingCurvesFromProgramAccounts(): Promise<ProgramAccount[] | null> {
     if (!this.heliusUrl) {
       throw new Error('Helius API key required for getProgramAccounts');
     }
@@ -430,11 +454,11 @@ class PumpFunTokenFetcher {
       });
 
       // get the response data
-      const data = await response.json();
+      const data: GetProgramAccountsResponse = await response.json();
 
       if (data.error) {
         // Retry if we got rate limited
-        if (data.error.code == -32600) {
+        if (data.error.code === -32600) {
           if (this.retries < 5) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             this.retries++;
@@ -445,11 +469,12 @@ class PumpFunTokenFetcher {
           return null;
         }
       }
+
       this.retries = 0; // reset counter
-      return data.result;
+      return data.result || null;
     } catch (error) {
       console.warn('There was an error with the Helius getProgramAccounts call', error);
-      this.retries = 0; // rest counter
+      this.retries = 0; // reset counter
       return null;
     }
   }
@@ -503,6 +528,8 @@ class PumpFunTokenFetcher {
     } catch (error) {
       console.log('ERROR FROM GETING ', error);
     }
+
+    if (!bondingcurveAccounts) return;
 
     console.log(`📊 Found ${bondingcurveAccounts.length} total bonding curves on-chain`);
 

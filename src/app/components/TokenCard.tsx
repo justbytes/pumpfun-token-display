@@ -1,16 +1,14 @@
 import TokenImage from './TokenImage';
 
-interface TokenCardProps {
-  mint: string;
+interface TokenProps {
+  tokenAddress: string;
   name: string;
   symbol: string;
   description: string;
   image: string;
 }
 
-export default function TokenCard({ token }: any) {
-  const { tokenAddress, name, symbol, description, image } = token;
-
+export default function TokenCard({ tokenAddress, name, symbol, description, image }: TokenProps) {
   return (
     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md hover:shadow-lg transition-shadow duration-300 p-6 border border-gray-200 dark:border-gray-700">
       {/* Token Image */}

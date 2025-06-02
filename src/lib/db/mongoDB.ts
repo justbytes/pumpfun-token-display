@@ -1,8 +1,7 @@
 // src/lib/db/mongoDB.ts
-import { MongoClient, Db, Collection, ServerApiVersion } from 'mongodb';
+import { MongoClient, Db, Collection, ServerApiVersion, Filter } from 'mongodb';
 import { promises as fs } from 'fs';
 import dotenv from 'dotenv';
-import { Token } from '../types/types';
 
 dotenv.config();
 
@@ -48,7 +47,7 @@ export function getDbConnection(): Db {
 export async function initializeMongoDb(): Promise<boolean> {
   try {
     // establish connection to mongo
-    const db = getDbConnection();
+    getDbConnection();
 
     // Ping the db
     await _client!.db('admin').command({ ping: 1 });
@@ -57,8 +56,8 @@ export async function initializeMongoDb(): Promise<boolean> {
     // Create the indexes
     await createMongoIndexes();
     return true;
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error);
+  } catch {
+    console.error('❌ MongoDB connection failed');
     return false;
   }
 }
@@ -96,21 +95,30 @@ export async function insertTokensBatchMongoDB(tokens: TokenDocument[]): Promise
       duplicates: tokens.length - result.insertedCount,
       errors: 0,
     };
-  } catch (error: any) {
-    // Handle bulk write errors (like duplicates)
-    if (error.code === 11000 || error.name === 'MongoBulkWriteError') {
-      const inserted = error.result?.insertedCount || 0;
-      const duplicates = tokens.length - inserted;
-
-      console.log(`✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`);
-      return {
-        inserted,
-        duplicates,
-        errors: 0,
+  } catch (error: unknown) {
+    // Type guard to check if error has the properties we need
+    if (error && typeof error === 'object' && 'code' in error) {
+      const mongoError = error as {
+        code?: number;
+        name?: string;
+        result?: { insertedCount?: number };
       };
+
+      // Handle bulk write errors (like duplicates)
+      if (mongoError.code === 11000 || mongoError.name === 'MongoBulkWriteError') {
+        const inserted = mongoError.result?.insertedCount || 0;
+        const duplicates = tokens.length - inserted;
+
+        console.log(`✅ Inserted: ${inserted}, Duplicates skipped: ${duplicates}`);
+        return {
+          inserted,
+          duplicates,
+          errors: 0,
+        };
+      }
     }
 
-    console.error(`❌ Error in batch insert: ${error}`);
+    console.error(`❌ Error in batch insert:`, error);
     return {
       inserted: 0,
       duplicates: 0,
@@ -163,13 +171,18 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
       duplicates: totalDuplicates,
       errors: totalErrors,
     };
-  } catch (error) {
-    console.error(`❌ Error loading tokens from file: ${error}`);
-    throw error;
+  } catch {
+    console.error(`❌ Error loading tokens from file to mongodb`);
+    return {
+      total: 0,
+      inserted: 0,
+      duplicates: 0,
+      errors: 0,
+    };
   }
 }
 
-// Get all tokens (with optional filters)
+// Get all tokens
 export async function getAllTokensMongoDB(filter?: {
   name?: string;
   symbol?: string;
@@ -180,7 +193,7 @@ export async function getAllTokensMongoDB(filter?: {
     const db = getDbConnection();
     const collection: Collection<TokenDocument> = db.collection('tokens');
 
-    let query: any = {};
+    const query: Filter<TokenDocument> = {};
 
     // Build query based on filters - updated for new structure
     if (filter?.name) {
@@ -200,12 +213,11 @@ export async function getAllTokensMongoDB(filter?: {
     }
 
     return await cursor.toArray();
-  } catch (error) {
-    console.error(`❌ Error getting tokens: ${error}`);
+  } catch {
+    console.error(`❌ Error getting tokens from mongo db`);
     return [];
   }
 }
-
 // Get token by mint address
 export async function getTokenByMint(mint: string): Promise<TokenDocument | null> {
   try {
@@ -213,8 +225,8 @@ export async function getTokenByMint(mint: string): Promise<TokenDocument | null
     const collection: Collection<TokenDocument> = db.collection('tokens');
 
     return await collection.findOne({ 'tokenData.mint': mint });
-  } catch (error) {
-    console.error(`❌ Error getting token by mint: ${error}`);
+  } catch {
+    console.error(`❌ Error getting token by mint in mongodb`);
     return null;
   }
 }
@@ -228,8 +240,8 @@ export async function getTokenByBondingCurve(
     const collection: Collection<TokenDocument> = db.collection('tokens');
 
     return await collection.findOne({ bondingCurveAddress });
-  } catch (error) {
-    console.error(`❌ Error getting token by bonding curve: ${error}`);
+  } catch {
+    console.error(`❌ Error getting token by bonding curve in mongodb`);
     return null;
   }
 }
@@ -255,13 +267,19 @@ export async function insertToken(token: TokenDocument): Promise<boolean> {
 
     const result = await collection.insertOne(document);
     return result.insertedId !== null;
-  } catch (error: any) {
-    // Handle duplicate key error
-    if (error.code === 11000) {
-      console.log(`⚠️ Token ${token.tokenAddress} already exists in database`);
-      return true;
+  } catch (error: unknown) {
+    // Type guard to check if error has the properties we need
+    if (error && typeof error === 'object' && 'code' in error) {
+      const mongoError = error as { code?: number };
+
+      // Handle duplicate key error
+      if (mongoError.code === 11000) {
+        console.log(`⚠️ Token ${token.tokenAddress} already exists in database`);
+        return true;
+      }
     }
-    console.error(`❌ Error adding token to db: ${error}`);
+
+    console.error(`❌ Error adding token to mongodb`);
     return false;
   }
 }
@@ -286,8 +304,8 @@ export async function getMongoTokenStats(): Promise<{
       completedBondingCurves,
       activeBondingCurves: totalTokens - completedBondingCurves,
     };
-  } catch (error) {
-    console.error(`❌ Error getting token stats: ${error}`);
+  } catch {
+    console.error(`❌ Error getting token stats from mongodb`);
     return null;
   }
 }
@@ -299,11 +317,7 @@ export async function createMongoIndexes(): Promise<boolean> {
     const collection: Collection<TokenDocument> = db.collection('tokens');
 
     // Drop old indexes first
-    try {
-      await collection.dropIndexes();
-    } catch (error) {
-      console.log('ℹ️ No existing indexes to drop');
-    }
+    await collection.dropIndexes();
 
     // Create new indexes for the updated structure
     await Promise.all([
@@ -343,8 +357,8 @@ export async function createMongoIndexes(): Promise<boolean> {
 
     console.log('✅ Updated token collection indexes created successfully');
     return true;
-  } catch (error) {
-    console.error(`❌ Error creating updated token indexes: ${error}`);
+  } catch {
+    console.error(`❌ Error creating updated token indexes for mongodb`);
     return false;
   }
 }
@@ -370,64 +384,65 @@ export async function searchTokens(
       .toArray();
 
     return tokens;
-  } catch (error) {
-    console.error(`❌ Error searching tokens: ${error}`);
+  } catch {
+    console.error(`❌ Error searching tokens in mongodb`);
     return [];
   }
 }
 
 //// IF YOU HAVE PUMPFUN TOKENS IN A FILE ////////
 
-async function loadTokenListToDatabase() {
-  console.log('🚀 Starting token loading process...');
+// async function loadTokenListToDatabase() {
+//   console.log('🚀 Starting token loading process...');
 
-  try {
-    // Initialize database connection
-    const connected = await initializeMongoDb();
-    if (!connected) {
-      throw new Error('Failed to connect to MongoDB');
-    }
+//   try {
+//     // Initialize database connection
+//     const connected = await initializeMongoDb();
+//     if (!connected) {
+//       throw new Error('Failed to connect to MongoDB');
+//     }
 
-    // Get current database stats
-    console.log('📊 Current database stats:');
+//     // Get current database stats
+//     console.log('📊 Current database stats:');
 
-    // Get stats
-    const tokenStats = await getMongoTokenStats();
+//     // Get stats
+//     const tokenStats = await getMongoTokenStats();
 
-    console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
-    console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
-    console.log(`   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`);
+//     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
+//     console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
+//     console.log(`   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`);
 
-    // Load tokens from your JSON file
-    const JSON_FILE_PATH = `${process.env.DATA_PATH}/pumpfun_token_list.json`;
+//     // Load tokens from your JSON file
+//     const JSON_FILE_PATH = `${process.env.DATA_PATH}/pumpfun_token_list.json`;
 
-    console.log('\n🔄 Loading tokens from file...');
-    const result = await loadTokenListFromFile(JSON_FILE_PATH);
+//     console.log('\n🔄 Loading tokens from file...');
+//     const result = await loadTokenListFromFile(JSON_FILE_PATH);
 
-    // Show results
-    console.log('\n✅ Loading completed!');
-    console.log(`   Total tokens in file: ${result.total}`);
-    console.log(`   Successfully inserted: ${result.inserted}`);
-    console.log(`   Duplicates skipped: ${result.duplicates}`);
-    console.log(`   Errors: ${result.errors}`);
+//     // Show results
+//     console.log('\n✅ Loading completed!');
+//     console.log(`   Total tokens in file: ${result.total}`);
+//     console.log(`   Successfully inserted: ${result.inserted}`);
+//     console.log(`   Duplicates skipped: ${result.duplicates}`);
+//     console.log(`   Errors: ${result.errors}`);
 
-    // Get updated database stats
-    console.log('\n📊 Updated database stats:');
-    const updatedTokenStats = await getMongoTokenStats();
-    console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
-    console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
-    console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);
-  } catch (error) {
-    console.error('❌ Error during loading process:', error);
-    process.exit(1);
-  } finally {
-    // Close the connection
-    if (_client) {
-      await _client.close();
-    }
-    process.exit(0);
-  }
-}
+//     // Get updated database stats
+//     console.log('\n📊 Updated database stats:');
+//     const updatedTokenStats = await getMongoTokenStats();
+//     console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
+//     console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
+//     console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);
+//   } catch (error) {
+//     console.error('❌ Error during loading process:', error);
+//     process.exit(1);
+//   } finally {
+//     // Close the connection
+//     if (_client) {
+//       await _client.close();
+//     }
+//     process.exit(0);
+//   }
+// }
+
 //// CHANGING THE STRUCTURE OF THE TOKEN DOCUMENT ////////
 
 // Migration function to flatten token document structure
@@ -534,9 +549,14 @@ export async function migrateTokenDocuments(): Promise<{
       alreadyMigrated: alreadyMigratedCount,
       errors: remainingOldDocs,
     };
-  } catch (error) {
-    console.error('❌ Error during migration:', error);
-    throw error;
+  } catch {
+    console.error('❌ Error during mongodb migration');
+    return {
+      total: 0,
+      migrated: 0,
+      alreadyMigrated: 0,
+      errors: 0,
+    };
   }
 }
 
