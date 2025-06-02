@@ -1,11 +1,11 @@
 // src/lib/utils/dataSyncUtility.ts - Updated for better-sqlite3
 import {
   getAllTokensMongoDB,
-  initializeDbConnection as initMongoDB,
+  initializeMongoDb as initMongoDB,
   getMongoTokenStats as getMongoStats,
-  insertTokensBatch,
+  insertTokensBatchMongoDB,
 } from '../db/mongoDB';
-import { initializeSQLDB, insertTokensBatchToSQL, sqlDB, getTokenStatsFromSQL } from '../db/sql';
+import { initializeSQLDB, insertTokensBatchToSQL, sqlDB, getTokenStatsFromSQL } from '../db/sqlite';
 
 interface SyncResult {
   success: boolean;
@@ -141,7 +141,7 @@ export async function syncSQLiteToMongo(): Promise<SyncResult> {
       console.log(`🔄 Processing batch ${batchNumber}/${totalBatches} (${batch.length} tokens)`);
 
       try {
-        const batchResult = await insertTokensBatch(batch);
+        const batchResult = await insertTokensBatchMongoDB(batch);
         totalInserted += batchResult.inserted;
         totalDuplicates += batchResult.duplicates;
         totalErrors += batchResult.errors;
@@ -348,12 +348,12 @@ export async function checkSyncStatus(): Promise<{
 /**
  * CLI function for manual sync
  */
-export async function runManualSync(transferToo: string): Promise<void> {
+export async function runManualSync(toCloud: boolean): Promise<void> {
   try {
     let result;
     console.log('🚀 Starting manual sync...');
 
-    if (transferToo == 'cloud') {
+    if (toCloud) {
       result = await syncSQLiteToMongo();
     } else {
       result = await syncMongoToSQLite();
@@ -377,17 +377,15 @@ export async function runManualSync(transferToo: string): Promise<void> {
   }
 }
 /**
- *  transferTo can be either "cloud" or "sqlite"
+ *  Pass the sync, status, or usage command
  *
- *  "cloud" send the data from sqlite -> mongodb
- *  "sqlite" sends data from mongodb -> sqlite
+ *  toCloud: true send the data from sqlite -> mongodb
+ *  toCloud: false sends data from mongodb -> sqlite
  */
-async function main(command: string, transferTo?: string) {
+async function main(command: string, toCloud?: boolean) {
   if (command === 'sync') {
-    if (!transferTo) return;
-
     // Sync to a database
-    runManualSync(transferTo);
+    runManualSync(toCloud!);
   } else if (command === 'status') {
     checkSyncStatus()
       .then(status => {
@@ -412,4 +410,4 @@ async function main(command: string, transferTo?: string) {
   }
 }
 
-main('sync', 'cloud');
+main('sync', false);

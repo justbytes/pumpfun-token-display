@@ -4,7 +4,7 @@ import {
   getTokensAfterFromSQL,
   getTokenStatsFromSQL,
   initializeSQLDB,
-} from '../../../../lib/db/sql';
+} from '../../../../lib/db/sqlite';
 
 // Cache the initialization status to avoid repeated connections
 let isInitialized = false;

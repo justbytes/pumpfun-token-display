@@ -45,11 +45,17 @@ export function getDbConnection(): Db {
 }
 
 // Initialize and test MongoDB connection
-export async function initializeDbConnection(): Promise<boolean> {
+export async function initializeMongoDb(): Promise<boolean> {
   try {
+    // establish connection to mongo
     const db = getDbConnection();
+
+    // Ping the db
     await _client!.db('admin').command({ ping: 1 });
     console.log('✅ MongoDB connection established');
+
+    // Create the indexes
+    await createMongoIndexes();
     return true;
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error);
@@ -58,7 +64,7 @@ export async function initializeDbConnection(): Promise<boolean> {
 }
 
 // Batch insert tokens with duplicate handling
-export async function insertTokensBatch(tokens: TokenDocument[]): Promise<{
+export async function insertTokensBatchMongoDB(tokens: TokenDocument[]): Promise<{
   inserted: number;
   duplicates: number;
   errors: number;
@@ -142,7 +148,7 @@ export async function loadTokenListFromFile(filePath: string): Promise<{
         )} (${chunk.length} tokens)`
       );
 
-      const result = await insertTokensBatch(chunk);
+      const result = await insertTokensBatchMongoDB(chunk);
       totalInserted += result.inserted;
       totalDuplicates += result.duplicates;
       totalErrors += result.errors;
@@ -287,7 +293,7 @@ export async function getMongoTokenStats(): Promise<{
 }
 
 // Create database indexes for better performance
-export async function createTokenIndexes(): Promise<boolean> {
+export async function createMongoIndexes(): Promise<boolean> {
   try {
     const db = getDbConnection();
     const collection: Collection<TokenDocument> = db.collection('tokens');
@@ -295,7 +301,6 @@ export async function createTokenIndexes(): Promise<boolean> {
     // Drop old indexes first
     try {
       await collection.dropIndexes();
-      console.log('🗑️ Dropped old indexes');
     } catch (error) {
       console.log('ℹ️ No existing indexes to drop');
     }
@@ -378,19 +383,15 @@ async function loadTokenListToDatabase() {
 
   try {
     // Initialize database connection
-    const connected = await initializeDbConnection();
+    const connected = await initializeMongoDb();
     if (!connected) {
       throw new Error('Failed to connect to MongoDB');
     }
 
-    // Create indexes for both collections
-    console.log('📝 Creating database indexes...');
-    await Promise.all([
-      createTokenIndexes(), // Token indexes
-    ]);
-
     // Get current database stats
     console.log('📊 Current database stats:');
+
+    // Get stats
     const tokenStats = await getMongoTokenStats();
 
     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
@@ -543,7 +544,7 @@ export async function migrateTokenDocuments(): Promise<{
 export async function runTokenMigration(): Promise<void> {
   try {
     // Initialize database connection
-    const connected = await initializeDbConnection();
+    const connected = await initializeMongoDb();
     if (!connected) {
       throw new Error('Failed to connect to MongoDB');
     }

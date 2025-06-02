@@ -54,7 +54,7 @@ class SQLDatabase {
       await this.createTokensTable();
 
       // Create indexes for better performance
-      await this.createIndexes();
+      await this.createSQliteIndexes();
 
       console.log('✅ SQLite database initialized successfully');
       return true;
@@ -94,7 +94,7 @@ class SQLDatabase {
   /**
    * Create database indexes for better performance
    */
-  private async createIndexes(): Promise<void> {
+  private async createSQliteIndexes(): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
     const indexes = [
@@ -132,7 +132,7 @@ class SQLDatabase {
       stmt.run([
         token.bondingCurveAddress,
         token.complete ? 1 : 0,
-        token.creator,
+        token.creator.toString(),
         token.tokenAddress,
         token.name,
         token.symbol,

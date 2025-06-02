@@ -8,7 +8,7 @@ import dotenv from 'dotenv';
 
 import { Token, TokenMetadata } from '../types/types';
 import { insertToken } from '../db/mongoDB';
-import { insertTokenToSQL, initializeSQLDB } from '../db/sql';
+import { insertTokenToSQL, initializeSQLDB } from '../db/sqlite';
 
 dotenv.config();
 

@@ -1,21 +1,25 @@
 // src/lib/models/PumpfunTokenFetcher.ts
 
 import bs58 from 'bs58';
-import { address, getAddressEncoder, getProgramDerivedAddress, SolanaClient } from 'gill';
+import {
+  address,
+  createSolanaClient,
+  getAddressEncoder,
+  getProgramDerivedAddress,
+  SolanaClient,
+} from 'gill';
 import * as borsh from '@coral-xyz/borsh';
 import { TOKEN_PROGRAM_ADDRESS } from 'gill/programs/token';
 import dotenv from 'dotenv';
 import { TokenMetadata, BondingCurveData, Token } from '../types/types';
 import {
-  initializeDbConnection,
-  createTokenIndexes,
-  insertTokensBatch,
   getMongoTokenStats,
-  insertToken,
   getDbConnection,
+  insertTokensBatchMongoDB,
+  initializeMongoDb,
 } from '../db/mongoDB';
-// Add SQLite imports
-import { initializeSQLDB, insertTokensBatchToSQL, sqlDB } from '../db/sql';
+
+import { initializeSQLDB, insertTokensBatchToSQL, sqlDB } from '../db/sqlite';
 
 dotenv.config();
 
@@ -54,7 +58,9 @@ class PumpFunTokenFetcher {
   // Initialize class variables
   private connection: SolanaClient<string>;
   private heliusUrl: string;
-  private dbInitialized: boolean = false;
+  private mongoDBInitialized: boolean = false;
+  private sqliteDBInitialized: boolean = false;
+  private retries: number = 0;
 
   /**
    * PumpfunTokenFetcher constructor setting the initial class variables
@@ -69,22 +75,28 @@ class PumpFunTokenFetcher {
   /**
    * Initialize the database connection and create indexes
    */
-  async initializeDatabase(): Promise<void> {
-    if (this.dbInitialized) return;
-
+  async initializeDatabases(): Promise<boolean> {
     console.log('🔄 Initializing database connection...');
-    const connected = await initializeDbConnection();
-    if (!connected) {
-      throw new Error('Failed to connect to MongoDB');
+
+    if (!this.mongoDBInitialized) {
+      const connected = await initializeMongoDb();
+      if (!connected) {
+        return false;
+      }
     }
 
-    console.log('📝 Creating database indexes...');
-    await Promise.all([
-      createTokenIndexes(), // Token indexes
-    ]);
+    if (!this.sqliteDBInitialized) {
+      const sqlInitialized = await initializeSQLDB(); // SQLite
+      if (!sqlInitialized) {
+        return false;
+      }
+    }
 
-    this.dbInitialized = true;
+    this.mongoDBInitialized = true;
+    this.sqliteDBInitialized = true;
+
     console.log('✅ Database initialized successfully');
+    return true;
   }
 
   /**
@@ -214,10 +226,6 @@ class PumpFunTokenFetcher {
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       try {
-        console.log(
-          `📡 Fetching metadata for ${tokenAddress} (attempt ${attempt + 1}/${maxRetries + 1})`
-        );
-
         const response = await fetch(this.heliusUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -228,7 +236,7 @@ class PumpFunTokenFetcher {
 
         // If something went wrong
         if (data.error) {
-          console.log(`❌ Error fetching metadata (attempt ${attempt + 1}):`, data.error.message);
+          console.log(`❌ Error fetching metadata for ${tokenAddress} (attempt ${attempt + 1}):`);
 
           // Handle rate limiting
           if (data.error.code === 429) {
@@ -278,7 +286,7 @@ class PumpFunTokenFetcher {
           image: asset.content?.files?.[0]?.uri || '',
         };
       } catch (error) {
-        console.error(`❌ Network error fetching metadata (attempt ${attempt + 1}):`, error);
+        console.error(`❌ Network error fetching metadata (attempt ${attempt + 1}):`);
 
         if (attempt < maxRetries) {
           const delay = initialDelay * Math.pow(2, attempt);
@@ -380,7 +388,7 @@ class PumpFunTokenFetcher {
    * Uses the helius getProgramAccounts endpoint and filters by the bonding curve discriminator
    * which will return all of the bonding curve accounts
    */
-  async getAllBondingCurves() {
+  async getBondingCurvesFromProgramAccounts(): Promise<any> {
     if (!this.heliusUrl) {
       throw new Error('Helius API key required for getProgramAccounts');
     }
@@ -425,13 +433,23 @@ class PumpFunTokenFetcher {
       const data = await response.json();
 
       if (data.error) {
-        console.log(data);
-        return null;
+        // Retry if we got rate limited
+        if (data.error.code == -32600) {
+          if (this.retries < 5) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            this.retries++;
+            return await this.getBondingCurvesFromProgramAccounts();
+          }
+        } else {
+          console.log('get program data returned an error');
+          return null;
+        }
       }
-
+      this.retries = 0; // reset counter
       return data.result;
     } catch (error) {
       console.warn('There was an error with the Helius getProgramAccounts call', error);
+      this.retries = 0; // rest counter
       return null;
     }
   }
@@ -468,26 +486,28 @@ class PumpFunTokenFetcher {
   async getFreshTokenList(): Promise<void> {
     // Initialize both databases
     console.log('🔄 Initializing databases...');
-    await this.initializeDatabase(); // MongoDB
+    const initialized = await this.initializeDatabases();
 
-    const sqlInitialized = await initializeSQLDB(); // SQLite
-    if (!sqlInitialized) {
-      throw new Error('Failed to initialize SQLite database');
-    }
+    if (!initialized)
+      throw new Error(
+        'There was an error when fetching getting fresh token list. Could not initialize databases.'
+      );
 
     console.log('✅ Both databases initialized successfully');
     console.log('🔄 Starting incremental update process...');
 
     // Get all bonding curves using the Helius
-    const allCurrentBondingCurves = await this.getAllBondingCurves();
-    if (!allCurrentBondingCurves) {
-      throw new Error('Failed to fetch current bonding curves');
+    let bondingcurveAccounts;
+    try {
+      bondingcurveAccounts = await this.getBondingCurvesFromProgramAccounts();
+    } catch (error) {
+      console.log('ERROR FROM GETING ', error);
     }
 
-    console.log(`📊 Found ${allCurrentBondingCurves.length} total bonding curves on-chain`);
+    console.log(`📊 Found ${bondingcurveAccounts.length} total bonding curves on-chain`);
 
-    // Extract just the addresses from the current bonding curves
-    const currentAddresses = allCurrentBondingCurves.map(
+    // Extract just the bonding curve addresses from the data
+    const bondingAddresses = bondingcurveAccounts.map(
       (bonding: { pubkey: string }) => bonding.pubkey
     );
 
@@ -496,7 +516,7 @@ class PumpFunTokenFetcher {
     console.log(`📋 Found ${existingAddresses.length} previously processed addresses in database`);
 
     // Find new addresses that haven't been processed yet
-    const newAddresses = currentAddresses.filter(
+    const newAddresses = bondingAddresses.filter(
       (address: string) => !existingAddresses.includes(address)
     );
 
@@ -529,7 +549,7 @@ class PumpFunTokenFetcher {
             console.log(`💾 Storing batch of ${tokenBatch.length} tokens to both databases...`);
 
             // Insert to MongoDB
-            const mongoResult = await insertTokensBatch(tokenBatch);
+            const mongoResult = await insertTokensBatchMongoDB(tokenBatch);
             console.log(
               `   MongoDB - Inserted: ${mongoResult.inserted}, Duplicates: ${mongoResult.duplicates}, Errors: ${mongoResult.errors}`
             );
@@ -593,27 +613,27 @@ class PumpFunTokenFetcher {
   }
 }
 
-// // Updated main function that uses database instead of files
-// async function main() {
-//   // Initialize connection
-//   const connection: SolanaClient<string> = createSolanaClient({
-//     urlOrMoniker: `${process.env.HELIUS_RPC_URL}`,
-//   });
+// Updated main function that uses database instead of files
+async function main() {
+  // Initialize connection
+  const connection: SolanaClient<string> = createSolanaClient({
+    urlOrMoniker: `${process.env.HELIUS_RPC_URL}`,
+  });
 
-//   // Create an instance of the pumpfun token fetcher class
-//   const fetcher = new PumpFunTokenFetcher(connection, `${process.env.HELIUS_KEY}`);
+  // Create an instance of the pumpfun token fetcher class
+  const fetcher = new PumpFunTokenFetcher(connection, `${process.env.HELIUS_KEY}`);
 
-//   try {
-//     // Update the db with the new tokens created
-//     await fetcher.updateTokenList();
+  try {
+    // Update the db with the new tokens created
+    await fetcher.getFreshTokenList();
 
-//     process.exit(0);
-//   } catch (error) {
-//     console.error('❌ Error in main process:', error);
-//     process.exit(1);
-//   }
-// }
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error in main process:', error);
+    process.exit(1);
+  }
+}
 
-// main();
+main();
 
 export { PumpFunTokenFetcher, bondingCurveSchema };

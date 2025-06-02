@@ -6,7 +6,7 @@ import {
   initializeSQLDB,
   getTokenCountFromSQL,
   getTokenStatsFromSQL,
-} from '../../../lib/db/sql';
+} from '../../../lib/db/sqlite';
 
 export async function GET(request: NextRequest) {
   try {
