@@ -157,7 +157,6 @@ class PumpFunEventListener {
    */
   private async flushMongoQueue(): Promise<void> {
     if (this.mongoQueue.length === 0) {
-      console.log('📊 MongoDB queue is empty, nothing to sync');
       return;
     }
 
@@ -283,8 +282,6 @@ class PumpFunEventListener {
   private async processCreateEvent(event: CreateEvent) {
     const { name, symbol, uri, mint, bonding_curve, creator } = event;
 
-    console.log(`\n🚀 New token created: ${name} (${symbol})`);
-
     // Convert all Solana/Anchor types to safe strings
     const safeTokenData = {
       name: this.safeStringify(name),
@@ -319,8 +316,6 @@ class PumpFunEventListener {
       const sqliteSuccess = await insertTokenToSQL(tokenDocument);
 
       if (sqliteSuccess) {
-        console.log('✅ Token successfully written to SQLite');
-
         // 2. Queue for MongoDB update
         this.mongoQueue.push(tokenDocument);
         console.log(`📝 Token queued for MongoDB (queue size: ${this.mongoQueue.length})`);

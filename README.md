@@ -1,6 +1,12 @@
 # Pumpfun Token Display
 
-A real-time pumpfun token indexer leveraging Helius, Next.js, React, and MongoDB.
+A real-time pumpfun token indexer leveraging Helius, Next.js, React, and MongoDB & SQlite, all deployed using AWS.
+
+### LIVE SITE
+
+Please note that its only setup for http connections
+
+http://ec2-13-58-137-59.us-east-2.compute.amazonaws.com/
 
 ## Databases
 

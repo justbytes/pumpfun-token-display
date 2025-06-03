@@ -99,7 +99,6 @@ export default function Home() {
       return;
     }
 
-    console.log('🔄 Starting token polling...');
     setIsPolling(true);
     const now = new Date().toISOString();
 
@@ -198,8 +197,6 @@ export default function Home() {
     try {
       setLoading(true);
       setError(null);
-
-      console.log(`Fetching all tokens from ${source.toUpperCase()}...`);
       const startTime = performance.now();
 
       const response = await fetch(`/api/token-list?source=${source}`);
@@ -218,11 +215,6 @@ export default function Home() {
         setDataLoadTime(new Date());
         setNewTokensCount(0);
         setDataSource(source);
-
-        console.log(
-          `✅ Loaded ${data.tokens.length} tokens from ${source.toUpperCase()} in ${data.queryTime}`
-        );
-        console.log(`📊 Total transfer time: ${loadTime}ms`);
 
         // Start polling if using SQLite
         if (source === 'sqlite') {

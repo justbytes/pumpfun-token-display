@@ -390,59 +390,6 @@ export async function searchTokens(
   }
 }
 
-//// IF YOU HAVE PUMPFUN TOKENS IN A FILE ////////
-
-// async function loadTokenListToDatabase() {
-//   console.log('🚀 Starting token loading process...');
-
-//   try {
-//     // Initialize database connection
-//     const connected = await initializeMongoDb();
-//     if (!connected) {
-//       throw new Error('Failed to connect to MongoDB');
-//     }
-
-//     // Get current database stats
-//     console.log('📊 Current database stats:');
-
-//     // Get stats
-//     const tokenStats = await getMongoTokenStats();
-
-//     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
-//     console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
-//     console.log(`   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`);
-
-//     // Load tokens from your JSON file
-//     const JSON_FILE_PATH = `${process.env.DATA_PATH}/pumpfun_token_list.json`;
-
-//     console.log('\n🔄 Loading tokens from file...');
-//     const result = await loadTokenListFromFile(JSON_FILE_PATH);
-
-//     // Show results
-//     console.log('\n✅ Loading completed!');
-//     console.log(`   Total tokens in file: ${result.total}`);
-//     console.log(`   Successfully inserted: ${result.inserted}`);
-//     console.log(`   Duplicates skipped: ${result.duplicates}`);
-//     console.log(`   Errors: ${result.errors}`);
-
-//     // Get updated database stats
-//     console.log('\n📊 Updated database stats:');
-//     const updatedTokenStats = await getMongoTokenStats();
-//     console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
-//     console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
-//     console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);
-//   } catch (error) {
-//     console.error('❌ Error during loading process:', error);
-//     process.exit(1);
-//   } finally {
-//     // Close the connection
-//     if (_client) {
-//       await _client.close();
-//     }
-//     process.exit(0);
-//   }
-// }
-
 //// CHANGING THE STRUCTURE OF THE TOKEN DOCUMENT ////////
 
 // Migration function to flatten token document structure
@@ -614,3 +561,55 @@ export async function rollbackTokenMigration(backupCollectionName: string): Prom
     throw error;
   }
 }
+//// IF YOU HAVE PUMPFUN TOKENS IN A FILE ////////
+
+// async function loadTokenListToDatabase() {
+//   console.log('🚀 Starting token loading process...');
+
+//   try {
+//     // Initialize database connection
+//     const connected = await initializeMongoDb();
+//     if (!connected) {
+//       throw new Error('Failed to connect to MongoDB');
+//     }
+
+//     // Get current database stats
+//     console.log('📊 Current database stats:');
+
+//     // Get stats
+//     const tokenStats = await getMongoTokenStats();
+
+//     console.log(`   Total tokens: ${tokenStats?.totalTokens || 0}`);
+//     console.log(`   Completed bonding curves: ${tokenStats?.completedBondingCurves || 0}`);
+//     console.log(`   Active bonding curves: ${tokenStats?.activeBondingCurves || 0}`);
+
+//     // Load tokens from your JSON file
+//     const JSON_FILE_PATH = `${process.env.DATA_PATH}/pumpfun_token_list.json`;
+
+//     console.log('\n🔄 Loading tokens from file...');
+//     const result = await loadTokenListFromFile(JSON_FILE_PATH);
+
+//     // Show results
+//     console.log('\n✅ Loading completed!');
+//     console.log(`   Total tokens in file: ${result.total}`);
+//     console.log(`   Successfully inserted: ${result.inserted}`);
+//     console.log(`   Duplicates skipped: ${result.duplicates}`);
+//     console.log(`   Errors: ${result.errors}`);
+
+//     // Get updated database stats
+//     console.log('\n📊 Updated database stats:');
+//     const updatedTokenStats = await getMongoTokenStats();
+//     console.log(`   Total tokens: ${updatedTokenStats?.totalTokens || 0}`);
+//     console.log(`   Completed bonding curves: ${updatedTokenStats?.completedBondingCurves || 0}`);
+//     console.log(`   Active bonding curves: ${updatedTokenStats?.activeBondingCurves || 0}`);
+//   } catch (error) {
+//     console.error('❌ Error during loading process:', error);
+//     process.exit(1);
+//   } finally {
+//     // Close the connection
+//     if (_client) {
+//       await _client.close();
+//     }
+//     process.exit(0);
+//   }
+// }
