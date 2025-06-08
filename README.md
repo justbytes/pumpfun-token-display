@@ -1,3 +1,5 @@
+![pump display banner](/assets/display.png)
+
 # Pumpfun Token Display
 
 A real-time pumpfun token indexer leveraging Helius, Next.js, React, and MongoDB & SQlite, all deployed using AWS.
