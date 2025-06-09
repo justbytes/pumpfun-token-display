@@ -125,15 +125,3 @@ await syncDatabases(toCloud: true)
 - Analytics Dashboard
 - Token performance metrics and trends
 
-## 📊 Performance
-Processing Rate: 100+ tokens per minute
-Sync Frequency: 5-minute cloud backup intervals
-
-## 🤝 Contributing
-
-Fork the repository
-Create a feature branch
-Commit your changes
-Push to the branch
-Open a Pull Request
-
