@@ -7,8 +7,9 @@ A real-time Solana token indexer that tracks and displays newly created PumpFun 
 ## 🌐 Live Demo
 
 [View Live Application](http://ec2-13-58-137-59.us-east-2.compute.amazonaws.com/)
-
 Note: Currently configured for HTTP connections
+
+[Watch demo](https://www.youtube.com/watch?v=EN2W7xehxpQ)
 
 ## ✨ Features
 
