@@ -137,5 +137,3 @@ Commit your changes
 Push to the branch
 Open a Pull Request
 
-## 📄 License
-This project is licensed under the MIT License.
