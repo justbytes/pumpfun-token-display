@@ -405,6 +405,7 @@ export async function runManualSync(toCloud: boolean): Promise<void> {
     process.exit(1);
   }
 }
+
 /**
  *  Pass the sync, status, or usage command
  *

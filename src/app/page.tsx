@@ -57,7 +57,7 @@ export default function Home() {
     if (!isComponentMountedRef.current) return;
 
     try {
-      // Just get the most recent 20 tokens from the database
+      // Just get the most recent 50 tokens from the database
       const response = await fetch('/api/tokens/recent?limit=50');
 
       if (!response.ok) {
@@ -303,7 +303,7 @@ export default function Home() {
         clearTimeout(autoRefreshTimeoutRef.current);
       }
     };
-  }, []); // Remove dependencies to avoid infinite loops
+  }, []);
 
   // Reset to page 1 when search changes
   useEffect(() => {
