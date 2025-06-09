@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "next dev",
+    "start:listener": "npx esrun src/lib/models/PumpfunEventListener.ts",
+    "fetch-tokens": "npx esrun src/lib/models/PumpfunTokenFetcher.ts",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
