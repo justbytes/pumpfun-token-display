@@ -113,52 +113,35 @@ export default function Home() {
   );
 
   // Load initial pages (first 3 pages)
-  const loadInitialPages = useCallback(
-    async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
-      try {
-        setLoading(true);
-        setError(null);
-        const startTime = performance.now();
+  const loadInitialPages = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const startTime = performance.now();
 
-        console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
+      console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
 
-        // Load pages sequentially to maintain order
-        for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
-          await loadPage(page);
-        }
-
-        const endTime = performance.now();
-        const loadTime = Math.round(endTime - startTime);
-
-        setDataLoadTime(new Date());
-        setNewTokensCount(0);
-
-        console.log(`✅ Initial load completed in ${loadTime}ms`);
-
-        // Start polling if using SQLite
-        if (source === 'sqlite') {
-          startPolling();
-        }
-      } catch (error) {
-        console.error('Error loading initial pages:', error);
-        setError('Failed to load tokens. Please try again.');
-
-        // If SQLite fails, try MongoDB as fallback
-        if (source === 'sqlite') {
-          console.log('🔄 SQLite failed, falling back to MongoDB...');
-          try {
-            await loadInitialPages('mongodb');
-            return;
-          } catch (mongoError) {
-            console.error('MongoDB fallback also failed:', mongoError);
-          }
-        }
-      } finally {
-        setLoading(false);
+      // Load pages sequentially to maintain order
+      for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
+        await loadPage(page);
       }
-    },
-    [loadPage]
-  );
+
+      const endTime = performance.now();
+      const loadTime = Math.round(endTime - startTime);
+
+      setDataLoadTime(new Date());
+      setNewTokensCount(0);
+
+      console.log(`✅ Initial load completed in ${loadTime}ms`);
+
+      startPolling();
+    } catch (error) {
+      console.error('Error loading initial pages:', error);
+      setError('Failed to load tokens. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPage]);
 
   // Modified poll function to only update first page
   const pollForNewTokens = useCallback(async () => {
@@ -331,7 +314,7 @@ export default function Home() {
     isComponentMountedRef.current = true;
 
     const initializeApp = async () => {
-      await loadInitialPages('sqlite');
+      await loadInitialPages();
     };
 
     initializeApp();
