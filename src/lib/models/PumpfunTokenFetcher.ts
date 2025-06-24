@@ -469,13 +469,13 @@ class PumpFunTokenFetcher {
     try {
       const db = new SQLDatabase();
       await db.initialize();
-      const addresses: any = await db.getAllBondingCurveAddresses();
+      const addresses = await db.getAllBondingCurveAddresses();
 
       console.log(`📋 Found ${addresses.length} existing bonding curve addresses in database`);
       return addresses;
     } catch (error) {
       console.error('❌ Error getting bonding curve addresses from database:', error);
-      throw new Error('Something went wrong trying to get all bonding curves from MongoDB');
+      throw new Error('Something went wrong trying to get all bonding curves from DB');
     }
   }
 

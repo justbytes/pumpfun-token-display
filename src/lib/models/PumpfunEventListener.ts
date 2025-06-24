@@ -9,18 +9,6 @@ import { insertTokenToSQL, initializeSQLDB } from '../db/sqlite';
 
 dotenv.config();
 
-interface TokenDocument {
-  bondingCurveAddress: string;
-  complete: boolean;
-  creator: string;
-  tokenAddress: string;
-  name: string;
-  symbol: string;
-  uri: string;
-  description: string;
-  image: string;
-}
-
 interface CreateEvent {
   name: string;
   symbol: string;

@@ -1,6 +1,5 @@
 // Updated src/app/api/token-list/route.tsx
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTokensMongoDB, initializeMongoDb } from '../../../../oldcode/mongoDB';
 import { getAllTokensFromSQL, initializeSQLDB, getTokenCountFromSQL } from '../../../lib/db/sqlite';
 
 export async function GET(request: NextRequest) {
