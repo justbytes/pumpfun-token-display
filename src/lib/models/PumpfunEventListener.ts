@@ -1,13 +1,10 @@
 // src/lib/models/PumpfunEventListener.ts
-
-import { Connection, PublicKey } from '@solana/web3.js';
-import { BorshCoder, Idl } from '@coral-xyz/anchor';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-
+import { Connection, PublicKey } from '@solana/web3.js';
+import { BorshCoder, Idl } from '@coral-xyz/anchor';
 import { TokenMetadata } from '../types/types';
-import { insertToken } from '../db/mongoDB';
 import { insertTokenToSQL, initializeSQLDB } from '../db/sqlite';
 
 dotenv.config();
@@ -48,8 +45,6 @@ class PumpFunEventListener {
   private logSubscriptionId: number | null = null;
   private newTokens: string[] = [];
   private sqliteInitialized: boolean = false;
-  private mongoQueue: TokenDocument[] = []; // Queue for MongoDB updates
-  private mongoUpdateInterval: NodeJS.Timeout | null = null;
 
   /**
    * Constructor
@@ -64,7 +59,6 @@ class PumpFunEventListener {
 
     // list for new tokens if its needed
     this.newTokens = [];
-    this.mongoQueue = [];
   }
 
   /**
@@ -140,59 +134,12 @@ class PumpFunEventListener {
   }
 
   /**
-   * Start MongoDB update timer (every 5 minutes)
-   */
-  private startMongoUpdateTimer(): void {
-    const MONGO_UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes
-
-    this.mongoUpdateInterval = setInterval(async () => {
-      await this.flushMongoQueue();
-    }, MONGO_UPDATE_INTERVAL);
-
-    console.log('⏰ MongoDB update timer started (5 minute intervals)');
-  }
-
-  /**
-   * Flush queued tokens to MongoDB
-   */
-  private async flushMongoQueue(): Promise<void> {
-    if (this.mongoQueue.length === 0) {
-      return;
-    }
-
-    console.log(`🔄 Syncing ${this.mongoQueue.length} tokens to MongoDB...`);
-
-    const tokensToSync = [...this.mongoQueue];
-    this.mongoQueue = []; // Clear queue immediately
-
-    let successCount = 0;
-    let errorCount = 0;
-
-    for (const tokenDocument of tokensToSync) {
-      try {
-        await insertToken(tokenDocument);
-        successCount++;
-      } catch (error) {
-        console.error(`❌ Failed to sync token ${tokenDocument.tokenAddress} to MongoDB:`, error);
-        errorCount++;
-        // Re-add failed tokens back to queue for next attempt
-        this.mongoQueue.push(tokenDocument);
-      }
-    }
-
-    console.log(`✅ MongoDB sync complete: ${successCount} synced, ${errorCount} failed`);
-  }
-
-  /**
    * Starts the listener
    */
   async startListening() {
     try {
       // Initialize SQLite first
       await this.initializeSQLite();
-
-      // Start MongoDB update timer
-      this.startMongoUpdateTimer();
 
       const programId = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
       console.log('🎧 Starting log-based listener for:', programId.toString());
@@ -263,17 +210,6 @@ class PumpFunEventListener {
       this.logSubscriptionId = null;
       console.log('🛑 Log listener stopped');
     }
-
-    // Stop MongoDB update timer
-    if (this.mongoUpdateInterval) {
-      clearInterval(this.mongoUpdateInterval);
-      this.mongoUpdateInterval = null;
-      console.log('⏰ MongoDB update timer stopped');
-    }
-
-    // Final flush to MongoDB
-    await this.flushMongoQueue();
-    console.log('💾 Final MongoDB sync completed');
   }
 
   /**
@@ -316,11 +252,7 @@ class PumpFunEventListener {
       const sqliteSuccess = await insertTokenToSQL(tokenDocument);
 
       if (sqliteSuccess) {
-        // 2. Queue for MongoDB update
-        this.mongoQueue.push(tokenDocument);
-        console.log(`📝 Token queued for MongoDB (queue size: ${this.mongoQueue.length})`);
-
-        // 3. Track new token
+        // 2. Track new token
         this.newTokens.push(safeTokenData.mint);
       } else {
         console.error('❌ Failed to write token to SQLite');
@@ -336,20 +268,6 @@ class PumpFunEventListener {
    */
   getNewTokensCount(): number {
     return this.newTokens.length;
-  }
-
-  /**
-   * Get MongoDB queue size
-   */
-  getMongoQueueSize(): number {
-    return this.mongoQueue.length;
-  }
-
-  /**
-   * Force MongoDB sync (for testing/manual trigger)
-   */
-  async forceMongSync(): Promise<void> {
-    await this.flushMongoQueue();
   }
 
   /**
@@ -413,17 +331,20 @@ class PumpFunEventListener {
       } catch {
         if (attempt < maxRetries - 1) {
           const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 1s, 2s, 4s
-          console.log(`⏱️ Waiting ${delay}ms before retry...`);
+          // console.log(`⏱️ Waiting ${delay}ms before retry...`);
           await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
-    console.error(`❌ Failed to fetch metadata from URI after ${maxRetries} attempts: ${uri}`);
+    //console.error(`❌ Failed to fetch metadata from URI after ${maxRetries} attempts: ${uri}`);
     return null;
   }
 }
 
+/**
+ * Starts the event listener
+ */
 export const startCreateEventListener = async () => {
   const PUMPFUN_IDL_JSON = path.join(__dirname, '../idls/pumpfun_idl.json');
   const PUMPFUN_IDL_DATA = fs.readFileSync(PUMPFUN_IDL_JSON, 'utf8');

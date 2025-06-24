@@ -329,6 +329,36 @@ class SQLDatabase {
   }
 
   /**
+   * Get all unique bonding curve addresses efficiently using SQL
+   */
+  async getAllBondingCurveAddresses(): Promise<string[]> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    try {
+      // SQL query to get distinct bonding curve addresses
+      const sql = `
+      SELECT DISTINCT bondingCurveAddress
+      FROM tokens
+      WHERE bondingCurveAddress IS NOT NULL
+        AND bondingCurveAddress != ''
+      ORDER BY bondingCurveAddress
+    `;
+
+      const stmt = this.db.prepare(sql);
+      const rows = stmt.all() as { bondingCurveAddress: string }[];
+
+      // Extract just the addresses into an array
+      const addresses = rows.map(row => row.bondingCurveAddress);
+
+      console.log(`📋 Found ${addresses.length} unique bonding curve addresses`);
+      return addresses;
+    } catch (error) {
+      console.error('❌ Error getting bonding curve addresses:', error);
+      return [];
+    }
+  }
+
+  /**
    * Get recent tokens (for frontend polling)
    */
   async getRecentTokens(limit: number = 50): Promise<TokenDocument[]> {
@@ -338,31 +368,6 @@ class SQLDatabase {
       orderDirection: 'DESC',
     });
   }
-
-  /**
-   * Get tokens created after a specific timestamp
-   */
-  // async getTokensAfter(timestamp: string): Promise<TokenDocument[]> {
-  //   if (!this.db) throw new Error('Database not initialized');
-
-  //   try {
-  //     const sql = 'SELECT * FROM tokens WHERE createdAt > ? ORDER BY createdAt DESC';
-  //     const stmt = this.db.prepare(sql);
-  //     const rows = stmt.all(timestamp);
-
-  //     console.log(`📊 SQL Result - Found ${rows.length} tokens after ${timestamp}`);
-
-  //     return rows.map(
-  //       (row: SQLiteTokenRow): TokenDocument => ({
-  //         ...row,
-  //         complete: Boolean(row.complete),
-  //       })
-  //     );
-  //   } catch {
-  //     console.error('❌ Error getting tokens after timestamp');
-  //     return [];
-  //   }
-  // }
 
   /**
    * Get token statistics
@@ -451,10 +456,6 @@ export async function getAllTokensFromSQL(options?: {
 export async function getRecentTokensFromSQL(limit: number = 50): Promise<TokenDocument[]> {
   return await sqlDB.getRecentTokens(limit);
 }
-
-// export async function getTokensAfterFromSQL(timestamp: string): Promise<TokenDocument[]> {
-//   return await sqlDB.getTokensAfter(timestamp);
-// }
 
 export async function getTokenStatsFromSQL(): Promise<TokenStats | null> {
   return await sqlDB.getTokenStats();

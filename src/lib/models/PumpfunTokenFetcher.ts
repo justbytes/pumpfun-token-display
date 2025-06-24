@@ -12,14 +12,8 @@ import * as borsh from '@coral-xyz/borsh';
 import { TOKEN_PROGRAM_ADDRESS } from 'gill/programs/token';
 import dotenv from 'dotenv';
 import { TokenMetadata, BondingCurveData } from '../types/types';
-import {
-  getMongoTokenStats,
-  getDbConnection,
-  insertTokensBatchMongoDB,
-  initializeMongoDb,
-} from '../db/mongoDB';
 
-import { initializeSQLDB, insertTokensBatchToSQL, sqlDB } from '../db/sqlite';
+import { initializeSQLDB, insertTokensBatchToSQL, SQLDatabase, sqlDB } from '../db/sqlite';
 
 dotenv.config();
 
@@ -82,7 +76,6 @@ class PumpFunTokenFetcher {
   // Initialize class variables
   private connection: SolanaClient<string>;
   private heliusUrl: string;
-  private mongoDBInitialized: boolean = false;
   private sqliteDBInitialized: boolean = false;
   private retries: number = 0;
 
@@ -102,13 +95,6 @@ class PumpFunTokenFetcher {
   async initializeDatabases(): Promise<boolean> {
     console.log('🔄 Initializing database connection...');
 
-    if (!this.mongoDBInitialized) {
-      const connected = await initializeMongoDb();
-      if (!connected) {
-        return false;
-      }
-    }
-
     if (!this.sqliteDBInitialized) {
       const sqlInitialized = await initializeSQLDB(); // SQLite
       if (!sqlInitialized) {
@@ -116,7 +102,6 @@ class PumpFunTokenFetcher {
       }
     }
 
-    this.mongoDBInitialized = true;
     this.sqliteDBInitialized = true;
 
     console.log('✅ Database initialized successfully');
@@ -482,19 +467,9 @@ class PumpFunTokenFetcher {
   // Get all of the bonding curves from sqlite db
   async getAllBondingCurveAddresses(): Promise<string[]> {
     try {
-      const db = getDbConnection();
-      const collection = db.collection<TokenDocument>('tokens');
-
-      // Check if collection exists and has documents
-      const documentCount = await collection.countDocuments();
-
-      if (documentCount === 0) {
-        console.log('📋 No tokens found in database');
-        return [];
-      }
-
-      // Get distinct bonding curve addresses from the tokens collection
-      const addresses = await collection.distinct('bondingCurveAddress');
+      const db = new SQLDatabase();
+      await db.initialize();
+      const addresses: any = await db.getAllBondingCurveAddresses();
 
       console.log(`📋 Found ${addresses.length} existing bonding curve addresses in database`);
       return addresses;
@@ -575,12 +550,6 @@ class PumpFunTokenFetcher {
           if (tokenBatch.length > 0) {
             console.log(`💾 Storing batch of ${tokenBatch.length} tokens to both databases...`);
 
-            // Insert to MongoDB
-            const mongoResult = await insertTokensBatchMongoDB(tokenBatch);
-            console.log(
-              `   MongoDB - Inserted: ${mongoResult.inserted}, Duplicates: ${mongoResult.duplicates}, Errors: ${mongoResult.errors}`
-            );
-
             // Insert to SQLite
             const sqliteResult = await insertTokensBatchToSQL(tokenBatch);
             console.log(
@@ -616,16 +585,6 @@ class PumpFunTokenFetcher {
   private async displayDatabaseStats(): Promise<void> {
     try {
       console.log('\n📊 Final Database Statistics:');
-
-      // MongoDB stats
-      const mongoStats = await getMongoTokenStats();
-      if (mongoStats) {
-        console.log('   MongoDB:');
-        console.log(`     Total tokens: ${mongoStats.totalTokens}`);
-        console.log(`     Completed bonding curves: ${mongoStats.completedBondingCurves}`);
-        console.log(`     Active bonding curves: ${mongoStats.activeBondingCurves}`);
-      }
-
       // SQLite stats
       const sqliteStats = await sqlDB.getTokenStats();
       if (sqliteStats) {
@@ -652,7 +611,7 @@ async function main() {
 
   try {
     // Update the db with the new tokens created
-    await fetcher.getFreshTokenList();
+    await fetcher.getAllBondingCurveAddresses();
 
     process.exit(0);
   } catch (error) {

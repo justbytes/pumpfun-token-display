@@ -14,7 +14,7 @@ data/
 
 # testing
 /coverage
-
+/oldcode
 # next.js
 /.next/
 /out/

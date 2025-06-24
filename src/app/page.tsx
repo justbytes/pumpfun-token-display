@@ -1,3 +1,4 @@
+// Updated src/app/page.tsx with pagination
 'use client';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import TokenCard from './components/TokenCard';
@@ -29,14 +30,16 @@ interface PaginationInfo {
 export default function Home() {
   // State management
   const [allTokens, setAllTokens] = useState<Token[]>([]);
+  const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set()); // Track which pages are loaded
   const [loading, setLoading] = useState(true);
+  const [pageLoading, setPageLoading] = useState(false); // Loading state for individual pages
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [dataLoadTime, setDataLoadTime] = useState<Date | null>(null);
   const [newTokensCount, setNewTokensCount] = useState(0);
   const [isPolling, setIsPolling] = useState(false);
-  const [dataSource, setDataSource] = useState<'sqlite' | 'mongodb'>('sqlite');
+  const [totalTokenCount, setTotalTokenCount] = useState<number>(0); // Total count from server
 
   // New refresh-related state
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
@@ -49,10 +52,115 @@ export default function Home() {
   const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const TOKENS_PER_PAGE = 50;
-  const POLLING_INTERVAL = 1000; // 1 second for better-sqlite3 (much faster)
-  const NEW_TOKEN_THRESHOLD = 5; // Show banner after 5 new tokens
+  const INITIAL_PAGES_TO_LOAD = 5; // Load first 5 pages initially
+  const POLLING_INTERVAL = 1000;
+  const NEW_TOKEN_THRESHOLD = 5;
 
-  // Poll for new tokens
+  // Load a specific page of tokens
+  const loadPage = useCallback(
+    async (pageNumber: number) => {
+      if (loadedPages.has(pageNumber)) {
+        return; // Page already loaded
+      }
+
+      try {
+        setPageLoading(true);
+
+        const offset = (pageNumber - 1) * TOKENS_PER_PAGE;
+        const response = await fetch(`/api/token-list?limit=${TOKENS_PER_PAGE}&offset=${offset}`);
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        if (data.success) {
+          setAllTokens(prevTokens => {
+            // Create a map of existing tokens by address for efficient lookup
+            const existingTokens = new Map(prevTokens.map(token => [token.tokenAddress, token]));
+
+            // Add new tokens from this page
+            data.tokens.forEach((token: Token) => {
+              existingTokens.set(token.tokenAddress, token);
+            });
+
+            // Convert back to array and sort by creation time (newest first)
+            return Array.from(existingTokens.values()).sort(
+              (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+            );
+          });
+
+          setLoadedPages(prev => new Set([...prev, pageNumber]));
+
+          // Update total count if provided
+          if (data.total !== undefined) {
+            setTotalTokenCount(data.total);
+          }
+
+          console.log(`✅ Loaded page ${pageNumber} (${data.tokens.length} tokens)`);
+        } else {
+          throw new Error(data.error || 'Failed to fetch page');
+        }
+      } catch (error) {
+        console.error(`Error loading page ${pageNumber}:`, error);
+        throw error;
+      } finally {
+        setPageLoading(false);
+      }
+    },
+    [loadedPages]
+  );
+
+  // Load initial pages (first 3 pages)
+  const loadInitialPages = useCallback(
+    async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
+      try {
+        setLoading(true);
+        setError(null);
+        const startTime = performance.now();
+
+        console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
+
+        // Load pages sequentially to maintain order
+        for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
+          await loadPage(page);
+        }
+
+        const endTime = performance.now();
+        const loadTime = Math.round(endTime - startTime);
+
+        setDataLoadTime(new Date());
+        setNewTokensCount(0);
+
+        console.log(`✅ Initial load completed in ${loadTime}ms`);
+
+        // Start polling if using SQLite
+        if (source === 'sqlite') {
+          startPolling();
+        }
+      } catch (error) {
+        console.error('Error loading initial pages:', error);
+        setError('Failed to load tokens. Please try again.');
+
+        // If SQLite fails, try MongoDB as fallback
+        if (source === 'sqlite') {
+          console.log('🔄 SQLite failed, falling back to MongoDB...');
+          try {
+            await loadInitialPages('mongodb');
+            return;
+          } catch (mongoError) {
+            console.error('MongoDB fallback also failed:', mongoError);
+          }
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loadPage]
+  );
+
+  // Modified poll function to only update first page
   const pollForNewTokens = useCallback(async () => {
     if (!isComponentMountedRef.current) return;
 
@@ -68,7 +176,6 @@ export default function Home() {
       const data = await response.json();
 
       if (data.success && data.tokens && data.tokens.length > 0) {
-        // Add any tokens we don't already have
         setAllTokens(prevTokens => {
           const existingAddresses = new Set(prevTokens.map(t => t.tokenAddress));
 
@@ -101,8 +208,7 @@ export default function Home() {
 
     setIsPolling(true);
     const now = new Date().toISOString();
-
-    lastPollTimeRef.current = now; // Set both state and ref
+    lastPollTimeRef.current = now;
 
     pollingIntervalRef.current = setInterval(() => {
       if (isComponentMountedRef.current) {
@@ -121,126 +227,63 @@ export default function Home() {
     }
   }, []);
 
-  // Manual refresh function (for full data reload)
+  // Handle page navigation
+  const handlePageChange = useCallback(
+    async (page: number) => {
+      if (page === currentPage) return;
+
+      setCurrentPage(page);
+
+      // Load the page if it's not already loaded
+      if (!loadedPages.has(page)) {
+        try {
+          await loadPage(page);
+        } catch (error) {
+          console.error(`Failed to load page ${page}:`, error);
+          setError(`Failed to load page ${page}. Please try again.`);
+        }
+      }
+
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [currentPage, loadedPages, loadPage]
+  );
+
+  // Manual refresh function
   const refreshTokenList = useCallback(async () => {
     console.log('🔄 Full refresh - reloading all token data...');
 
-    // Clear new token indicators
+    // Clear everything and start fresh
+    setAllTokens([]);
+    setLoadedPages(new Set());
     setNewTokensCount(0);
+    setCurrentPage(1);
 
-    // Clear auto-refresh timeout
     if (autoRefreshTimeoutRef.current) {
       clearTimeout(autoRefreshTimeoutRef.current);
       autoRefreshTimeoutRef.current = null;
     }
 
-    // Reset to first page if not already there
-    if (currentPage !== 1) {
-      setCurrentPage(1);
-    }
-
-    // Temporarily stop polling to avoid conflicts
     const wasPolling = isPolling;
     if (wasPolling) {
-      // Stop polling
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-        setIsPolling(false);
-      }
+      stopPolling();
     }
 
     try {
-      // Fetch fresh data directly without using the callback
-      setLoading(true);
-      setError(null);
-
-      const response = await fetch(`/api/token-list?source=${dataSource}`);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      if (data.success) {
-        setAllTokens(data.tokens);
-        setDataLoadTime(new Date());
-        setNewTokensCount(0);
-
-        console.log(`✅ Refreshed ${data.tokens.length} tokens`);
-      } else {
-        throw new Error(data.error || 'Failed to fetch tokens');
-      }
-
+      await loadInitialPages();
       setLastRefreshTime(new Date());
 
-      // Resume polling if it was active
-      if (wasPolling && dataSource === 'sqlite') {
+      if (wasPolling) {
         setTimeout(() => {
           console.log('🔄 Resuming token polling...');
-          setIsPolling(true);
-
-          pollingIntervalRef.current = setInterval(() => {
-            pollForNewTokens();
-          }, POLLING_INTERVAL);
+          startPolling();
         }, 1000);
       }
     } catch (error) {
       console.error('Error during refresh:', error);
       setError('Failed to refresh tokens. Please try again.');
-    } finally {
-      setLoading(false);
     }
-  }, [currentPage, isPolling, dataSource, pollForNewTokens]);
-
-  // Fetch all tokens from the specified source
-  const fetchAllTokens = useCallback(async (source: 'sqlite' | 'mongodb' = 'sqlite') => {
-    try {
-      setLoading(true);
-      setError(null);
-      const startTime = performance.now();
-
-      const response = await fetch(`/api/token-list?source=${source}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.success) {
-        const endTime = performance.now();
-        const loadTime = Math.round(endTime - startTime);
-
-        setAllTokens(data.tokens);
-        setDataLoadTime(new Date());
-        setNewTokensCount(0);
-        setDataSource(source);
-
-        // Start polling if using SQLite
-        if (source === 'sqlite') {
-          startPolling();
-        }
-      } else {
-        throw new Error(data.error || 'Failed to fetch tokens');
-      }
-    } catch (error) {
-      console.error('Error fetching tokens:', error);
-      setError('Failed to fetch tokens. Please try again.');
-
-      // If SQLite fails, try MongoDB as fallback
-      if (source === 'sqlite') {
-        console.log('🔄 SQLite failed, falling back to MongoDB...');
-        try {
-          await fetchAllTokens('mongodb');
-          return;
-        } catch (mongoError) {
-          console.error('MongoDB fallback also failed:', mongoError);
-        }
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  }, [isPolling, loadInitialPages, stopPolling, startPolling]);
 
   // Filter tokens based on search term
   const filteredTokens = useMemo(() => {
@@ -267,7 +310,9 @@ export default function Home() {
 
   // Calculate pagination info
   const paginationInfo: PaginationInfo = useMemo(() => {
-    const totalTokens = filteredTokens.length;
+    const totalTokens = searchTerm
+      ? filteredTokens.length
+      : totalTokenCount || filteredTokens.length;
     const totalPages = Math.ceil(totalTokens / TOKENS_PER_PAGE);
 
     return {
@@ -279,19 +324,14 @@ export default function Home() {
       startIndex: totalTokens > 0 ? (currentPage - 1) * TOKENS_PER_PAGE + 1 : 0,
       endIndex: Math.min(currentPage * TOKENS_PER_PAGE, totalTokens),
     };
-  }, [filteredTokens.length, currentPage]);
+  }, [currentPage, filteredTokens.length, totalTokenCount, searchTerm]);
 
   // Component lifecycle
   useEffect(() => {
     isComponentMountedRef.current = true;
 
     const initializeApp = async () => {
-      await fetchAllTokens('sqlite'); // Default to SQLite
-
-      // Start polling after initial load if using SQLite
-      if (dataSource === 'sqlite') {
-        setTimeout(() => startPolling(), 100);
-      }
+      await loadInitialPages('sqlite');
     };
 
     initializeApp();
@@ -303,7 +343,7 @@ export default function Home() {
         clearTimeout(autoRefreshTimeoutRef.current);
       }
     };
-  }, []);
+  }, [loadInitialPages, stopPolling]);
 
   // Reset to page 1 when search changes
   useEffect(() => {
@@ -313,42 +353,37 @@ export default function Home() {
   // Event handlers
   const handlePrevPage = () => {
     if (paginationInfo.hasPrevPage) {
-      setCurrentPage(prev => prev - 1);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      handlePageChange(currentPage - 1);
     }
   };
 
   const handleNextPage = () => {
     if (paginationInfo.hasNextPage) {
-      setCurrentPage(prev => prev + 1);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      handlePageChange(currentPage + 1);
     }
   };
 
   const handlePageJump = (page: number) => {
     if (page >= 1 && page <= paginationInfo.totalPages) {
-      setCurrentPage(page);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      handlePageChange(page);
     }
   };
 
   const handleFirstPage = () => {
-    setCurrentPage(1);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    handlePageChange(1);
   };
 
   const handleLastPage = () => {
-    setCurrentPage(paginationInfo.totalPages);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    handlePageChange(paginationInfo.totalPages);
   };
 
   const handleRefresh = () => {
     setSearchTerm('');
-    setCurrentPage(1);
     stopPolling();
     refreshTokenList();
   };
 
+  // Rest of your component remains the same...
   const getDataInfo = () => {
     if (!dataLoadTime) return '';
 
@@ -428,13 +463,14 @@ export default function Home() {
         <div className="text-sm text-gray-700 dark:text-gray-300">
           Showing {paginationInfo.startIndex} to {paginationInfo.endIndex} of{' '}
           {totalTokens.toLocaleString()} tokens
+          {pageLoading && <span className="ml-2 text-blue-600">Loading...</span>}
         </div>
 
         <div className="flex items-center space-x-1">
           {/* First and Previous */}
           <button
             onClick={handleFirstPage}
-            disabled={currentPage === 1}
+            disabled={currentPage === 1 || pageLoading}
             className="px-2 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="First page"
           >
@@ -442,7 +478,7 @@ export default function Home() {
           </button>
           <button
             onClick={handlePrevPage}
-            disabled={!paginationInfo.hasPrevPage}
+            disabled={!paginationInfo.hasPrevPage || pageLoading}
             className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
             Previous
@@ -458,11 +494,17 @@ export default function Home() {
               <button
                 key={pageNum}
                 onClick={() => handlePageJump(pageNum as number)}
-                className={`px-3 py-1 text-sm rounded transition-colors ${
+                disabled={pageLoading}
+                className={`px-3 py-1 text-sm rounded transition-colors disabled:opacity-50 ${
                   pageNum === currentPage
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                } ${
+                  !loadedPages.has(pageNum as number) && pageNum !== currentPage
+                    ? 'ring-1 ring-blue-300'
+                    : ''
                 }`}
+                title={!loadedPages.has(pageNum as number) ? 'Click to load page' : ''}
               >
                 {pageNum}
               </button>
@@ -472,14 +514,14 @@ export default function Home() {
           {/* Next and Last */}
           <button
             onClick={handleNextPage}
-            disabled={!paginationInfo.hasNextPage}
+            disabled={!paginationInfo.hasNextPage || pageLoading}
             className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
             Next
           </button>
           <button
             onClick={handleLastPage}
-            disabled={currentPage === totalPages}
+            disabled={currentPage === totalPages || pageLoading}
             className="px-2 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             title="Last page"
           >
@@ -498,7 +540,9 @@ export default function Home() {
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">
             Loading PumpFun Tokens
           </h2>
-          <p className="text-gray-600 dark:text-gray-400">Loading tokens please wait...</p>
+          <p className="text-gray-600 dark:text-gray-400">
+            Loading first {INITIAL_PAGES_TO_LOAD * TOKENS_PER_PAGE} tokens...
+          </p>
         </div>
       </div>
     );
@@ -536,7 +580,8 @@ export default function Home() {
           </h1>
           <div className="text-gray-600 dark:text-gray-400 space-y-2">
             <p className="text-lg">
-              {allTokens.length.toLocaleString()} tokens • Lightning-fast navigation
+              {(totalTokenCount || allTokens.length).toLocaleString()} tokens • Lightning-fast
+              navigation
             </p>
             <div className="flex justify-center items-center space-x-4 text-sm flex-wrap">
               {isPolling && (
@@ -556,6 +601,10 @@ export default function Home() {
               <span>⚡ {getDataInfo()}</span>
 
               {lastRefreshTime && <span>🔄 {getRefreshInfo()}</span>}
+
+              <span className="text-xs">
+                📄 Pages loaded: {loadedPages.size}/{paginationInfo.totalPages}
+              </span>
             </div>
           </div>
         </div>
@@ -607,7 +656,8 @@ export default function Home() {
           <div className="flex justify-center items-center space-x-4 flex-wrap gap-2">
             <button
               onClick={handleRefresh}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center space-x-2"
+              disabled={loading || pageLoading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center space-x-2 disabled:opacity-50"
             >
               <span>🔄</span>
               <span>Refresh</span>
@@ -685,10 +735,15 @@ export default function Home() {
         {/* Footer Stats */}
         <div className="text-center py-8 border-t border-gray-200 dark:border-gray-700 mt-8">
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Total: {allTokens.length.toLocaleString()} tokens • Page {paginationInfo.currentPage} of{' '}
-            {paginationInfo.totalPages.toLocaleString()}
+            Total: {(totalTokenCount || allTokens.length).toLocaleString()} tokens • Page{' '}
+            {paginationInfo.currentPage} of {paginationInfo.totalPages.toLocaleString()}
             {isPolling && ' • Live updates active (1s intervals)'}
             {autoRefreshEnabled && ' • Auto-refresh enabled'}
+            <br />
+            Loaded pages:{' '}
+            {Array.from(loadedPages)
+              .sort((a, b) => a - b)
+              .join(', ')}
           </p>
         </div>
       </div>
