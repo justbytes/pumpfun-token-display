@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTokensFromSQL, initializeSQLDB, getTokenCountFromSQL } from '../../../lib/db/sqlite';
 
+let isInitialized = false;
+
 export async function GET(request: NextRequest) {
   try {
     // Parse query parameters
@@ -13,16 +15,20 @@ export async function GET(request: NextRequest) {
       ? searchParams.get('complete') === 'true'
       : undefined;
 
-    // Use SQLite for fast reads
-    console.log(`📊 Fetching tokens from SQLite (limit: ${limit}, offset: ${offset})...`);
-
-    // Initialize SQLite if not already done
-    const sqliteInitialized = await initializeSQLDB();
-    if (!sqliteInitialized) {
-      console.error('Failed to initialize SQL database');
+    /// Initialize DB once
+    if (!isInitialized) {
+      const sqliteInitialized = await initializeSQLDB();
+      if (!sqliteInitialized) {
+        return NextResponse.json(
+          { error: 'Failed to initialize SQLite database' },
+          { status: 500 }
+        );
+      }
+      isInitialized = true;
     }
 
-    const startTime = performance.now();
+    // Start a timer
+    //const startTime = performance.now();
 
     // Get tokens from SQLite with filtering options
     const tokens = await getAllTokensFromSQL({
@@ -38,17 +44,16 @@ export async function GET(request: NextRequest) {
       totalCount = await getTokenCountFromSQL();
     }
 
-    const endTime = performance.now();
-    const queryTime = Math.round(endTime - startTime);
+    // const endTime = performance.now();
+    // const queryTime = Math.round(endTime - startTime);
 
-    console.log(`✅ SQLite query completed in ${queryTime}ms (${tokens.length} tokens)`);
+    // console.log(`✅ SQLite query completed in ${queryTime}ms (${tokens.length} tokens)`);
 
     return NextResponse.json({
       success: true,
       tokens,
       total: totalCount || tokens.length,
-      source: 'sqlite',
-      queryTime: `${queryTime}ms`,
+      // queryTime: `${queryTime}ms`,
       pagination: {
         limit,
         offset,

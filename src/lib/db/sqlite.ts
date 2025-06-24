@@ -359,17 +359,6 @@ class SQLDatabase {
   }
 
   /**
-   * Get recent tokens (for frontend polling)
-   */
-  async getRecentTokens(limit: number = 50): Promise<TokenDocument[]> {
-    return this.getAllTokensSQlite({
-      limit,
-      orderBy: 'createdAt',
-      orderDirection: 'DESC',
-    });
-  }
-
-  /**
    * Get token statistics
    */
   async getTokenStats(): Promise<TokenStats | null> {
@@ -451,10 +440,6 @@ export async function getAllTokensFromSQL(options?: {
   complete?: boolean;
 }): Promise<TokenDocument[]> {
   return await sqlDB.getAllTokensSQlite(options);
-}
-
-export async function getRecentTokensFromSQL(limit: number = 50): Promise<TokenDocument[]> {
-  return await sqlDB.getRecentTokens(limit);
 }
 
 export async function getTokenStatsFromSQL(): Promise<TokenStats | null> {

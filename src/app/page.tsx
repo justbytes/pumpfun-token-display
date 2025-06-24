@@ -42,7 +42,6 @@ export default function Home() {
   const [totalTokenCount, setTotalTokenCount] = useState<number>(0); // Total count from server
 
   // New refresh-related state
-  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
   // Refs for polling
@@ -52,7 +51,7 @@ export default function Home() {
   const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const TOKENS_PER_PAGE = 50;
-  const INITIAL_PAGES_TO_LOAD = 5; // Load first 5 pages initially
+  const INITIAL_PAGES_TO_LOAD = 10; // Load first 10 pages initially
   const POLLING_INTERVAL = 1000;
   const NEW_TOKEN_THRESHOLD = 5;
 
@@ -112,44 +111,13 @@ export default function Home() {
     [loadedPages]
   );
 
-  // Load initial pages (first 3 pages)
-  const loadInitialPages = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const startTime = performance.now();
-
-      console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
-
-      // Load pages sequentially to maintain order
-      for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
-        await loadPage(page);
-      }
-
-      const endTime = performance.now();
-      const loadTime = Math.round(endTime - startTime);
-
-      setDataLoadTime(new Date());
-      setNewTokensCount(0);
-
-      console.log(`✅ Initial load completed in ${loadTime}ms`);
-
-      startPolling();
-    } catch (error) {
-      console.error('Error loading initial pages:', error);
-      setError('Failed to load tokens. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }, [loadPage]);
-
   // Modified poll function to only update first page
   const pollForNewTokens = useCallback(async () => {
     if (!isComponentMountedRef.current) return;
 
     try {
-      // Just get the most recent 50 tokens from the database
-      const response = await fetch('/api/tokens/recent?limit=50');
+      // Just get the most recent 25 tokens from the database
+      const response = await fetch('/api/token-list?limit=25');
 
       if (!response.ok) {
         console.warn('❌ Polling failed:', response.status);
@@ -199,6 +167,37 @@ export default function Home() {
       }
     }, POLLING_INTERVAL);
   }, [pollForNewTokens]);
+
+  // Load initial pages
+  const loadInitialPages = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const startTime = performance.now();
+
+      console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
+
+      // Load pages sequentially to maintain order
+      for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
+        await loadPage(page);
+      }
+
+      const endTime = performance.now();
+      const loadTime = Math.round(endTime - startTime);
+
+      setDataLoadTime(new Date());
+      setNewTokensCount(0);
+
+      console.log(`✅ Initial load completed in ${loadTime}ms`);
+
+      startPolling();
+    } catch (error) {
+      console.error('Error loading initial pages:', error);
+      setError('Failed to load tokens. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadPage, startPolling]);
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -356,10 +355,6 @@ export default function Home() {
     handlePageChange(1);
   };
 
-  const handleLastPage = () => {
-    handlePageChange(paginationInfo.totalPages);
-  };
-
   const handleRefresh = () => {
     setSearchTerm('');
     stopPolling();
@@ -402,39 +397,32 @@ export default function Home() {
     // Generate page numbers to show
     const getPageNumbers = () => {
       const pages = [];
-      const maxVisible = 5;
+      const maxVisible = 3; // Changed to 3 since you want 3 pages at a time
 
       if (totalPages <= maxVisible) {
         for (let i = 1; i <= totalPages; i++) {
           pages.push(i);
         }
       } else {
-        // Always show first page
-        pages.push(1);
+        // Calculate start and end for sliding window
+        let start = currentPage - 1;
+        let end = currentPage + 1;
 
-        const start = Math.max(2, currentPage - 1);
-        const end = Math.min(totalPages - 1, currentPage + 1);
-
-        // Add ellipsis if needed
-        if (start > 2) {
-          pages.push('...');
+        // Adjust if we're near the beginning
+        if (start < 1) {
+          start = 1;
+          end = 3;
         }
 
-        // Add middle pages
+        // Adjust if we're near the end
+        if (end > totalPages) {
+          end = totalPages;
+          start = totalPages - 2;
+        }
+
+        // Add the pages in the window
         for (let i = start; i <= end; i++) {
-          if (i !== 1 && i !== totalPages) {
-            pages.push(i);
-          }
-        }
-
-        // Add ellipsis if needed
-        if (end < totalPages - 1) {
-          pages.push('...');
-        }
-
-        // Always show last page
-        if (totalPages > 1) {
-          pages.push(totalPages);
+          pages.push(i);
         }
       }
 
@@ -468,31 +456,25 @@ export default function Home() {
           </button>
 
           {/* Page Numbers */}
-          {getPageNumbers().map((pageNum, index) =>
-            pageNum === '...' ? (
-              <span key={`ellipsis-${index}`} className="px-2 py-1 text-gray-500">
-                ...
-              </span>
-            ) : (
-              <button
-                key={pageNum}
-                onClick={() => handlePageJump(pageNum as number)}
-                disabled={pageLoading}
-                className={`px-3 py-1 text-sm rounded transition-colors disabled:opacity-50 ${
-                  pageNum === currentPage
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-                } ${
-                  !loadedPages.has(pageNum as number) && pageNum !== currentPage
-                    ? 'ring-1 ring-blue-300'
-                    : ''
-                }`}
-                title={!loadedPages.has(pageNum as number) ? 'Click to load page' : ''}
-              >
-                {pageNum}
-              </button>
-            )
-          )}
+          {getPageNumbers().map(pageNum => (
+            <button
+              key={pageNum}
+              onClick={() => handlePageJump(pageNum as number)}
+              disabled={pageLoading}
+              className={`px-3 py-1 text-sm rounded transition-colors disabled:opacity-50 ${
+                pageNum === currentPage
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+              } ${
+                !loadedPages.has(pageNum as number) && pageNum !== currentPage
+                  ? 'ring-1 ring-blue-300'
+                  : ''
+              }`}
+              title={!loadedPages.has(pageNum as number) ? 'Click to load page' : ''}
+            >
+              {pageNum}
+            </button>
+          ))}
 
           {/* Next and Last */}
           <button
@@ -501,14 +483,6 @@ export default function Home() {
             className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
             Next
-          </button>
-          <button
-            onClick={handleLastPage}
-            disabled={currentPage === totalPages || pageLoading}
-            className="px-2 py-1 text-sm bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            title="Last page"
-          >
-            »»
           </button>
         </div>
       </div>
@@ -646,7 +620,7 @@ export default function Home() {
               <span>Refresh</span>
             </button>
 
-            <button
+            {/* <button
               onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
               className={`px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 ${
                 autoRefreshEnabled
@@ -656,7 +630,7 @@ export default function Home() {
             >
               <span>{autoRefreshEnabled ? '🤖' : '📱'}</span>
               <span>{autoRefreshEnabled ? 'Auto-Refresh ON' : 'Auto-Refresh OFF'}</span>
-            </button>
+            </button> */}
           </div>
         </div>
 
@@ -719,14 +693,8 @@ export default function Home() {
         <div className="text-center py-8 border-t border-gray-200 dark:border-gray-700 mt-8">
           <p className="text-sm text-gray-500 dark:text-gray-400">
             Total: {(totalTokenCount || allTokens.length).toLocaleString()} tokens • Page{' '}
-            {paginationInfo.currentPage} of {paginationInfo.totalPages.toLocaleString()}
+            {paginationInfo.currentPage}
             {isPolling && ' • Live updates active (1s intervals)'}
-            {autoRefreshEnabled && ' • Auto-refresh enabled'}
-            <br />
-            Loaded pages:{' '}
-            {Array.from(loadedPages)
-              .sort((a, b) => a - b)
-              .join(', ')}
           </p>
         </div>
       </div>
