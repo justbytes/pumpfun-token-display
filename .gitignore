@@ -2,6 +2,7 @@
 src/lib/data/bonding_addresses.json
 src/lib/data/pumpfun_token_list.json
 data/
+drizzle/
 # dependencies
 /node_modules
 /.pnp
@@ -12,12 +13,13 @@ data/
 !.yarn/releases
 !.yarn/versions
 
+
 # testing
 /coverage
-/oldcode
 # next.js
 /.next/
 /out/
+
 
 # production
 /build

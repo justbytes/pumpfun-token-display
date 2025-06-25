@@ -1,8 +1,6 @@
 // Updated src/app/api/token-list/route.tsx
 import { NextRequest, NextResponse } from 'next/server';
-import { getAllTokensFromSQL, initializeSQLDB, getTokenCountFromSQL } from '../../../lib/db/sqlite';
-
-let isInitialized = false;
+import { getAllTokensFromDB, getTokenCountFromDB } from '@/lib/db/queries';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,23 +13,11 @@ export async function GET(request: NextRequest) {
       ? searchParams.get('complete') === 'true'
       : undefined;
 
-    /// Initialize DB once
-    if (!isInitialized) {
-      const sqliteInitialized = await initializeSQLDB();
-      if (!sqliteInitialized) {
-        return NextResponse.json(
-          { error: 'Failed to initialize SQLite database' },
-          { status: 500 }
-        );
-      }
-      isInitialized = true;
-    }
-
     // Start a timer
     //const startTime = performance.now();
 
     // Get tokens from SQLite with filtering options
-    const tokens = await getAllTokensFromSQL({
+    const tokens = await getAllTokensFromDB({
       limit,
       offset,
       searchTerm,
@@ -41,7 +27,7 @@ export async function GET(request: NextRequest) {
     // Get total count for pagination (only if we need it)
     let totalCount = 0;
     if (offset !== undefined || limit !== undefined) {
-      totalCount = await getTokenCountFromSQL();
+      totalCount = await getTokenCountFromDB();
     }
 
     // const endTime = performance.now();

@@ -13,7 +13,11 @@ import { TOKEN_PROGRAM_ADDRESS } from 'gill/programs/token';
 import dotenv from 'dotenv';
 import { TokenMetadata, BondingCurveData } from '../types/types';
 
-import { initializeSQLDB, insertTokensBatchToSQL, SQLDatabase, sqlDB } from '../db/sqlite';
+import {
+  getAllBondingCurveAddresses,
+  getTokenStatsFromDB,
+  insertTokensBatchToDB,
+} from '../db/queries';
 
 dotenv.config();
 
@@ -92,21 +96,21 @@ class PumpFunTokenFetcher {
   /**
    * Initialize the database connection and create indexes
    */
-  async initializeDatabases(): Promise<boolean> {
-    console.log('🔄 Initializing database connection...');
+  // async initializeDatabases(): Promise<boolean> {
+  //   console.log('🔄 Initializing database connection...');
 
-    if (!this.sqliteDBInitialized) {
-      const sqlInitialized = await initializeSQLDB(); // SQLite
-      if (!sqlInitialized) {
-        return false;
-      }
-    }
+  //   if (!this.sqliteDBInitialized) {
+  //     const sqlInitialized = await initializeSQLDB(); // SQLite
+  //     if (!sqlInitialized) {
+  //       return false;
+  //     }
+  //   }
 
-    this.sqliteDBInitialized = true;
+  //   this.sqliteDBInitialized = true;
 
-    console.log('✅ Database initialized successfully');
-    return true;
-  }
+  //   console.log('✅ Database initialized successfully');
+  //   return true;
+  // }
 
   /**
    * Get token mint address from bonding curve using the bonding curve ATA
@@ -467,9 +471,7 @@ class PumpFunTokenFetcher {
   // Get all of the bonding curves from sqlite db
   async getAllBondingCurveAddresses(): Promise<string[]> {
     try {
-      const db = new SQLDatabase();
-      await db.initialize();
-      const addresses = await db.getAllBondingCurveAddresses();
+      const addresses = await getAllBondingCurveAddresses();
 
       console.log(`📋 Found ${addresses.length} existing bonding curve addresses in database`);
       return addresses;
@@ -484,16 +486,6 @@ class PumpFunTokenFetcher {
    * This processes only new bonding curves that haven't been processed yet
    */
   async getFreshTokenList(): Promise<void> {
-    // Initialize both databases
-    console.log('🔄 Initializing databases...');
-    const initialized = await this.initializeDatabases();
-
-    if (!initialized)
-      throw new Error(
-        'There was an error when fetching getting fresh token list. Could not initialize databases.'
-      );
-
-    console.log('✅ Both databases initialized successfully');
     console.log('🔄 Starting incremental update process...');
 
     // Get all bonding curves using the Helius
@@ -551,7 +543,7 @@ class PumpFunTokenFetcher {
             console.log(`💾 Storing batch of ${tokenBatch.length} tokens to both databases...`);
 
             // Insert to SQLite
-            const sqliteResult = await insertTokensBatchToSQL(tokenBatch);
+            const sqliteResult = await insertTokensBatchToDB(tokenBatch);
             console.log(
               `   SQLite - Inserted: ${sqliteResult.inserted}, Duplicates: ${sqliteResult.duplicates}, Errors: ${sqliteResult.errors}`
             );
@@ -586,12 +578,10 @@ class PumpFunTokenFetcher {
     try {
       console.log('\n📊 Final Database Statistics:');
       // SQLite stats
-      const sqliteStats = await sqlDB.getTokenStats();
+      const sqliteStats = await getTokenStatsFromDB();
       if (sqliteStats) {
         console.log('   SQLite:');
         console.log(`     Total tokens: ${sqliteStats.totalTokens}`);
-        console.log(`     Completed bonding curves: ${sqliteStats.completedBondingCurves}`);
-        console.log(`     Active bonding curves: ${sqliteStats.activeBondingCurves}`);
       }
     } catch (error) {
       console.error('❌ Error displaying database stats:', error);

@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { BorshCoder, Idl } from '@coral-xyz/anchor';
 import { TokenMetadata } from '../types/types';
-import { insertTokenToSQL, initializeSQLDB } from '../db/sqlite';
+import { insertTokenToDB } from '../db/queries';
 
 dotenv.config();
 
@@ -32,7 +32,6 @@ class PumpFunEventListener {
   private coder: BorshCoder;
   private logSubscriptionId: number | null = null;
   private newTokens: string[] = [];
-  private sqliteInitialized: boolean = false;
 
   /**
    * Constructor
@@ -107,28 +106,10 @@ class PumpFunEventListener {
   }
 
   /**
-   * Initialize SQLite database
-   */
-  private async initializeSQLite(): Promise<void> {
-    if (this.sqliteInitialized) return;
-
-    const initialized = await initializeSQLDB();
-    if (!initialized) {
-      throw new Error('Failed to initialize SQLite database');
-    }
-
-    this.sqliteInitialized = true;
-    console.log('✅ SQLite database initialized for event listener');
-  }
-
-  /**
    * Starts the listener
    */
   async startListening() {
     try {
-      // Initialize SQLite first
-      await this.initializeSQLite();
-
       const programId = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
       console.log('🎧 Starting log-based listener for:', programId.toString());
 
@@ -236,8 +217,7 @@ class PumpFunEventListener {
     };
 
     try {
-      // 1. Immediately write to SQLite for fast access
-      const sqliteSuccess = await insertTokenToSQL(tokenDocument);
+      const sqliteSuccess = await insertTokenToDB(tokenDocument);
 
       if (sqliteSuccess) {
         // 2. Track new token

@@ -30,7 +30,6 @@ interface PaginationInfo {
 export default function Home() {
   // State management
   const [allTokens, setAllTokens] = useState<Token[]>([]);
-  const [loadedPages, setLoadedPages] = useState<Set<number>>(new Set()); // Track which pages are loaded
   const [loading, setLoading] = useState(true);
   const [pageLoading, setPageLoading] = useState(false); // Loading state for individual pages
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +38,8 @@ export default function Home() {
   const [dataLoadTime, setDataLoadTime] = useState<Date | null>(null);
   const [newTokensCount, setNewTokensCount] = useState(0);
   const [isPolling, setIsPolling] = useState(false);
-  const [totalTokenCount, setTotalTokenCount] = useState<number>(0); // Total count from server
+  const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set());
+  const [totalTokenCount, setTotalTokenCount] = useState<number>(0);
 
   // New refresh-related state
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
@@ -51,22 +51,26 @@ export default function Home() {
   const autoRefreshTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const TOKENS_PER_PAGE = 50;
-  const INITIAL_PAGES_TO_LOAD = 10; // Load first 10 pages initially
+  const TOKENS_PER_BATCH = 500; // Load 500 tokens at once (10 pages worth)
   const POLLING_INTERVAL = 1000;
   const NEW_TOKEN_THRESHOLD = 5;
 
   // Load a specific page of tokens
-  const loadPage = useCallback(
-    async (pageNumber: number) => {
-      if (loadedPages.has(pageNumber)) {
-        return; // Page already loaded
+  const loadTokenBatch = useCallback(
+    async (batchNumber: number) => {
+      if (loadedBatches.has(batchNumber)) {
+        return; // Batch already loaded
       }
 
       try {
         setPageLoading(true);
 
-        const offset = (pageNumber - 1) * TOKENS_PER_PAGE;
-        const response = await fetch(`/api/token-list?limit=${TOKENS_PER_PAGE}&offset=${offset}`);
+        const offset = (batchNumber - 1) * TOKENS_PER_BATCH;
+        console.log(
+          `🔄 Loading batch ${batchNumber} (tokens ${offset + 1}-${offset + TOKENS_PER_BATCH})`
+        );
+
+        const response = await fetch(`/api/token-list?limit=${TOKENS_PER_BATCH}&offset=${offset}`);
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -79,7 +83,7 @@ export default function Home() {
             // Create a map of existing tokens by address for efficient lookup
             const existingTokens = new Map(prevTokens.map(token => [token.tokenAddress, token]));
 
-            // Add new tokens from this page
+            // Add new tokens from this batch
             data.tokens.forEach((token: Token) => {
               existingTokens.set(token.tokenAddress, token);
             });
@@ -90,25 +94,45 @@ export default function Home() {
             );
           });
 
-          setLoadedPages(prev => new Set([...prev, pageNumber]));
+          setLoadedBatches(prev => new Set([...prev, batchNumber]));
 
           // Update total count if provided
           if (data.total !== undefined) {
             setTotalTokenCount(data.total);
           }
 
-          console.log(`✅ Loaded page ${pageNumber} (${data.tokens.length} tokens)`);
+          console.log(`✅ Loaded batch ${batchNumber} (${data.tokens.length} tokens)`);
         } else {
-          throw new Error(data.error || 'Failed to fetch page');
+          throw new Error(data.error || 'Failed to fetch batch');
         }
       } catch (error) {
-        console.error(`Error loading page ${pageNumber}:`, error);
+        console.error(`Error loading batch ${batchNumber}:`, error);
         throw error;
       } finally {
         setPageLoading(false);
       }
     },
-    [loadedPages]
+    [loadedBatches]
+  );
+
+  // Check if we need to load more tokens when user navigates to a page
+  const ensureTokensLoaded = useCallback(
+    async (pageNumber: number) => {
+      // Calculate which batch this page belongs to
+      const requiredTokenIndex = pageNumber * TOKENS_PER_PAGE;
+      const requiredBatch = Math.ceil(requiredTokenIndex / TOKENS_PER_BATCH);
+
+      // Use the current state value instead of stale closure
+      setLoadedBatches(currentBatches => {
+        if (!currentBatches.has(requiredBatch)) {
+          console.log(`📄 Page ${pageNumber} requires batch ${requiredBatch}, loading...`);
+          // Load the batch asynchronously without blocking state update
+          loadTokenBatch(requiredBatch).catch(console.error);
+        }
+        return currentBatches; // Return unchanged
+      });
+    },
+    [loadTokenBatch] // Only depend on loadTokenBatch
   );
 
   // Modified poll function to only update first page
@@ -157,6 +181,7 @@ export default function Home() {
       return;
     }
 
+    console.log('🎧 Starting token polling...');
     setIsPolling(true);
     const now = new Date().toISOString();
     lastPollTimeRef.current = now;
@@ -168,19 +193,22 @@ export default function Home() {
     }, POLLING_INTERVAL);
   }, [pollForNewTokens]);
 
-  // Load initial pages
-  const loadInitialPages = useCallback(async () => {
+  // Load initial batch (first 500 tokens)
+  const loadInitialTokens = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const startTime = performance.now();
 
-      console.log(`🔄 Loading initial ${INITIAL_PAGES_TO_LOAD} pages...`);
+      console.log(`🔄 Loading initial batch (first ${TOKENS_PER_BATCH} tokens)...`);
 
-      // Load pages sequentially to maintain order
-      for (let page = 1; page <= INITIAL_PAGES_TO_LOAD; page++) {
-        await loadPage(page);
-      }
+      // Clear existing data
+      setAllTokens([]);
+      setLoadedBatches(new Set());
+      setCurrentPage(1);
+
+      // Load the first batch
+      await loadTokenBatch(1);
 
       const endTime = performance.now();
       const loadTime = Math.round(endTime - startTime);
@@ -189,15 +217,13 @@ export default function Home() {
       setNewTokensCount(0);
 
       console.log(`✅ Initial load completed in ${loadTime}ms`);
-
-      startPolling();
     } catch (error) {
-      console.error('Error loading initial pages:', error);
+      console.error('Error loading initial tokens:', error);
       setError('Failed to load tokens. Please try again.');
     } finally {
       setLoading(false);
     }
-  }, [loadPage, startPolling]);
+  }, [loadTokenBatch]);
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -209,63 +235,60 @@ export default function Home() {
     }
   }, []);
 
-  // Handle page navigation
+  // Handle page navigation with auto-loading
   const handlePageChange = useCallback(
-    async (page: number) => {
+    (page: number) => {
       if (page === currentPage) return;
 
+      console.log(`📄 Navigating to page ${page}`);
       setCurrentPage(page);
 
-      // Load the page if it's not already loaded
-      if (!loadedPages.has(page)) {
-        try {
-          await loadPage(page);
-        } catch (error) {
-          console.error(`Failed to load page ${page}:`, error);
-          setError(`Failed to load page ${page}. Please try again.`);
-        }
-      }
+      // Ensure we have enough tokens loaded for this page
+      ensureTokensLoaded(page);
 
       window.scrollTo({ top: 0, behavior: 'smooth' });
     },
-    [currentPage, loadedPages, loadPage]
+    [currentPage, ensureTokensLoaded]
   );
 
   // Manual refresh function
   const refreshTokenList = useCallback(async () => {
     console.log('🔄 Full refresh - reloading all token data...');
 
-    // Clear everything and start fresh
-    setAllTokens([]);
-    setLoadedPages(new Set());
-    setNewTokensCount(0);
-    setCurrentPage(1);
+    // Stop polling first
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+      setIsPolling(false);
+    }
 
     if (autoRefreshTimeoutRef.current) {
       clearTimeout(autoRefreshTimeoutRef.current);
       autoRefreshTimeoutRef.current = null;
     }
 
-    const wasPolling = isPolling;
-    if (wasPolling) {
-      stopPolling();
-    }
+    // Clear everything and start fresh
+    setAllTokens([]);
+    setLoadedBatches(new Set());
+    setNewTokensCount(0);
+    setCurrentPage(1);
 
     try {
-      await loadInitialPages();
+      await loadInitialTokens();
       setLastRefreshTime(new Date());
 
-      if (wasPolling) {
-        setTimeout(() => {
-          console.log('🔄 Resuming token polling...');
+      // Restart polling after refresh
+      setTimeout(() => {
+        if (isComponentMountedRef.current) {
+          console.log('🔄 Resuming token polling after refresh...');
           startPolling();
-        }, 1000);
-      }
+        }
+      }, 1000);
     } catch (error) {
       console.error('Error during refresh:', error);
       setError('Failed to refresh tokens. Please try again.');
     }
-  }, [isPolling, loadInitialPages, stopPolling, startPolling]);
+  }, [loadInitialTokens, startPolling]);
 
   // Filter tokens based on search term
   const filteredTokens = useMemo(() => {
@@ -313,19 +336,29 @@ export default function Home() {
     isComponentMountedRef.current = true;
 
     const initializeApp = async () => {
-      await loadInitialPages();
+      await loadInitialTokens();
+      // Start polling after initial load completes
+      setTimeout(() => {
+        if (isComponentMountedRef.current) {
+          startPolling();
+        }
+      }, 1000); // Give it a second before starting polling
     };
 
     initializeApp();
 
     return () => {
       isComponentMountedRef.current = false;
-      stopPolling();
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       if (autoRefreshTimeoutRef.current) {
         clearTimeout(autoRefreshTimeoutRef.current);
+        autoRefreshTimeoutRef.current = null;
       }
     };
-  }, [loadInitialPages, stopPolling]);
+  }, []);
 
   // Reset to page 1 when search changes
   useEffect(() => {
@@ -369,11 +402,12 @@ export default function Home() {
     const diffMs = now.getTime() - dataLoadTime.getTime();
     const diffSecs = Math.floor(diffMs / 1000);
 
-    if (diffSecs < 5) return 'Data loaded just now';
-    if (diffSecs < 60) return `Data loaded ${diffSecs} seconds ago`;
+    const batchInfo = `📦 Batches Loaded: ${loadedBatches.size}`;
+
+    if (diffSecs < 5) return `Data loaded just now • ${batchInfo}`;
+    if (diffSecs < 60) return `Data loaded ${diffSecs}s ago • ${batchInfo}`;
     const diffMins = Math.floor(diffSecs / 60);
-    if (diffMins === 1) return 'Data loaded 1 minute ago';
-    return `Data loaded ${diffMins} minutes ago`;
+    return `Data loaded ${diffMins}m ago • ${batchInfo}`;
   };
 
   const getRefreshInfo = () => {
@@ -465,12 +499,8 @@ export default function Home() {
                 pageNum === currentPage
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
-              } ${
-                !loadedPages.has(pageNum as number) && pageNum !== currentPage
-                  ? 'ring-1 ring-blue-300'
-                  : ''
-              }`}
-              title={!loadedPages.has(pageNum as number) ? 'Click to load page' : ''}
+              } ${'ring-1 ring-blue-300'}`}
+              // title={!loadedPages.has(pageNum as number) ? 'Click to load page' : ''}
             >
               {pageNum}
             </button>
@@ -498,7 +528,7 @@ export default function Home() {
             Loading PumpFun Tokens
           </h2>
           <p className="text-gray-600 dark:text-gray-400">
-            Loading first {INITIAL_PAGES_TO_LOAD * TOKENS_PER_PAGE} tokens...
+            Loading first {TOKENS_PER_BATCH * TOKENS_PER_PAGE} tokens...
           </p>
         </div>
       </div>
@@ -558,10 +588,6 @@ export default function Home() {
               <span>⚡ {getDataInfo()}</span>
 
               {lastRefreshTime && <span>🔄 {getRefreshInfo()}</span>}
-
-              <span className="text-xs">
-                📄 Pages loaded: {loadedPages.size}/{paginationInfo.totalPages}
-              </span>
             </div>
           </div>
         </div>
