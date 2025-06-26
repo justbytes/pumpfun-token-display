@@ -2,6 +2,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAllTokensFromDB, getTokenCountFromDB } from '@/lib/db/queries';
 
+/**
+ * Reads from the postgresql database and gets the tokens accordingly
+ */
 export async function GET(request: NextRequest) {
   try {
     // Parse query parameters
@@ -13,10 +16,7 @@ export async function GET(request: NextRequest) {
       ? searchParams.get('complete') === 'true'
       : undefined;
 
-    // Start a timer
-    //const startTime = performance.now();
-
-    // Get tokens from SQLite with filtering options
+    // Get tokens from DB with filtering options
     const tokens = await getAllTokensFromDB({
       limit,
       offset,
@@ -30,16 +30,11 @@ export async function GET(request: NextRequest) {
       totalCount = await getTokenCountFromDB();
     }
 
-    // const endTime = performance.now();
-    // const queryTime = Math.round(endTime - startTime);
-
-    // console.log(`✅ SQLite query completed in ${queryTime}ms (${tokens.length} tokens)`);
-
+    // Return the results
     return NextResponse.json({
       success: true,
       tokens,
       total: totalCount || tokens.length,
-      // queryTime: `${queryTime}ms`,
       pagination: {
         limit,
         offset,

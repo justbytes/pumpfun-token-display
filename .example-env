@@ -1,5 +1,9 @@
 HELIUS_RPC_URL=
 HELIUS_KEY=
-DATA_PATH=<only needed if you intend on saving/loading tokens and bonding curves from fs>
+NEXTJS_API_URL=
 
-MONGO_DB_URL=
+DB_HOST=
+DB_PORT=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=

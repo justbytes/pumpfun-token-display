@@ -27,7 +27,7 @@ interface CreateEvent {
 // CreateEvent discriminator from your IDL
 const CREATE_EVENT_DISCRIMINATOR = Buffer.from([27, 114, 169, 77, 222, 235, 99, 118]);
 
-class PumpFunEventListener {
+export class PumpFunEventListener {
   private connection: Connection;
   private coder: BorshCoder;
   private logSubscriptionId: number | null = null;
@@ -182,7 +182,7 @@ class PumpFunEventListener {
   }
 
   /**
-   * Process CreateEvent - now writes immediately to SQLite and queues for MongoDB
+   * Process CreateEvent - writes immediately to DB
    */
   private async processCreateEvent(event: CreateEvent) {
     const { name, symbol, uri, mint, bonding_curve, creator } = event;
@@ -217,13 +217,13 @@ class PumpFunEventListener {
     };
 
     try {
-      const sqliteSuccess = await insertTokenToDB(tokenDocument);
+      const postgreSuccess = await insertTokenToDB(tokenDocument);
 
-      if (sqliteSuccess) {
+      if (postgreSuccess) {
         // 2. Track new token
         this.newTokens.push(safeTokenData.mint);
       } else {
-        console.error('❌ Failed to write token to SQLite');
+        console.error('❌ Failed to write token to DB');
       }
     } catch (error) {
       console.error('❌ Error processing new token:', error);
@@ -335,8 +335,5 @@ export const startCreateEventListener = async () => {
 
   return listener;
 };
-
-// Export the listener class
-export { PumpFunEventListener };
 
 startCreateEventListener().catch(console.error);

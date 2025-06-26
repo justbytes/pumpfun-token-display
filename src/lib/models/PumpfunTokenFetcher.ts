@@ -80,7 +80,6 @@ class PumpFunTokenFetcher {
   // Initialize class variables
   private connection: SolanaClient<string>;
   private heliusUrl: string;
-  private sqliteDBInitialized: boolean = false;
   private retries: number = 0;
 
   /**
@@ -92,25 +91,6 @@ class PumpFunTokenFetcher {
     this.connection = connection;
     this.heliusUrl = `https://mainnet.helius-rpc.com/?api-key=${heliusApiKey}`;
   }
-
-  /**
-   * Initialize the database connection and create indexes
-   */
-  // async initializeDatabases(): Promise<boolean> {
-  //   console.log('🔄 Initializing database connection...');
-
-  //   if (!this.sqliteDBInitialized) {
-  //     const sqlInitialized = await initializeSQLDB(); // SQLite
-  //     if (!sqlInitialized) {
-  //       return false;
-  //     }
-  //   }
-
-  //   this.sqliteDBInitialized = true;
-
-  //   console.log('✅ Database initialized successfully');
-  //   return true;
-  // }
 
   /**
    * Get token mint address from bonding curve using the bonding curve ATA
@@ -428,7 +408,7 @@ class PumpFunTokenFetcher {
           ],
           dataSlice: {
             offset: 0,
-            length: 0, // Just get first 50 bytes to test
+            length: 0,
           },
         },
       ],
@@ -468,7 +448,7 @@ class PumpFunTokenFetcher {
     }
   }
 
-  // Get all of the bonding curves from sqlite db
+  // Get all of the bonding curves from db
   async getAllBondingCurveAddresses(): Promise<string[]> {
     try {
       const addresses = await getAllBondingCurveAddresses();
@@ -542,10 +522,10 @@ class PumpFunTokenFetcher {
           if (tokenBatch.length > 0) {
             console.log(`💾 Storing batch of ${tokenBatch.length} tokens to both databases...`);
 
-            // Insert to SQLite
-            const sqliteResult = await insertTokensBatchToDB(tokenBatch);
+            // Insert to DB
+            const postgreResult = await insertTokensBatchToDB(tokenBatch);
             console.log(
-              `   SQLite - Inserted: ${sqliteResult.inserted}, Duplicates: ${sqliteResult.duplicates}, Errors: ${sqliteResult.errors}`
+              `   Postgre - Inserted: ${postgreResult.inserted}, Duplicates: ${postgreResult.duplicates}, Errors: ${postgreResult.errors}`
             );
 
             // Clear the batch for next round
@@ -577,11 +557,11 @@ class PumpFunTokenFetcher {
   private async displayDatabaseStats(): Promise<void> {
     try {
       console.log('\n📊 Final Database Statistics:');
-      // SQLite stats
-      const sqliteStats = await getTokenStatsFromDB();
-      if (sqliteStats) {
-        console.log('   SQLite:');
-        console.log(`     Total tokens: ${sqliteStats.totalTokens}`);
+      // DB stats
+      const postgreStats = await getTokenStatsFromDB();
+      if (postgreStats) {
+        console.log('   Postgre:');
+        console.log(`     Total tokens: ${postgreStats.totalTokens}`);
       }
     } catch (error) {
       console.error('❌ Error displaying database stats:', error);
@@ -589,7 +569,7 @@ class PumpFunTokenFetcher {
   }
 }
 
-// Updated main function that uses database instead of files
+// main function that uses database instead of files
 async function main() {
   // Initialize connection
   const connection: SolanaClient<string> = createSolanaClient({
@@ -601,7 +581,7 @@ async function main() {
 
   try {
     // Update the db with the new tokens created
-    await fetcher.getAllBondingCurveAddresses();
+    await fetcher.getFreshTokenList();
 
     process.exit(0);
   } catch (error) {

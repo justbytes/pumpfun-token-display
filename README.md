@@ -2,93 +2,133 @@
 
 # 🚀 PumpFun Token Indexer
 
-A real-time Solana token indexer that tracks and displays newly created PumpFun tokens with sub-second performance. Built with Next.js, React, and a dual-database architecture for optimal speed and reliability.
+A real-time Solana token indexer that tracks and displays newly created PumpFun tokens with sub-second performance.
 
 ## 🌐 Live Demo
 
-[View Live Application](http://ec2-13-58-137-59.us-east-2.compute.amazonaws.com/)
-Note: Currently configured for HTTP connections
+[View Live Application](http://ec2-18-219-41-139.us-east-2.compute.amazonaws.com/)
+Currently configured for HTTP connections
 
-[Watch demo](https://www.youtube.com/watch?v=EN2W7xehxpQ)
+[Watch demo](https://www.youtube.com/watch?v=mfBdOPcmGXQ)
 
 ## ✨ Features
 
-- Real-time Token Tracking
+- Real-time token tracking
 - Monitors 100+ PumpFun token creation events per minute
-- Fast Search
-- Sub-second query responses with advanced filtering
-- Live Updates
-- Automatic token list refresh with real-time data
-- Responsive Design
-- Optimized for desktop and mobile viewing
-- Pagination System
-- Efficient browsing of 50 tokens per page
-- Robust Data Collection
+- Instantly search over 400k pumpfun tokens
+- Responsive design
+- Lazy loading and pagination system
+- Robust data collection
 - Automated bonding curve parsing and metadata extraction
-- Dual-Database Architecture
-- SQLite for speed, MongoDB for cloud backup
 
 ## 🛠 Tech Stack
 
+### Programming languages
+
+- TypeScript
+
 ### Frontend
 
-- Next.js 14
-- React 18
-- TypeScript
+- Next.js
+- React
 - TailwindCSS
 
 ### Backend & Infrastructure
 
 - Node.js
-- SQLite (local high-speed queries)
-- MongoDB (cloud persistence)
+- PostgreSQL/Drizzle
+- Docker
 - AWS EC2 deployment
 
 ### Blockchain Integration
 
 - Solana Web3.js
+- Gill
+- Anchor
 - Helius RPC API
-- Solana Program Account parsing
-
-## 🏗 Architecture
-
-### Dual Database System
-
-This application uses a sophisticated two-database approach:
-
-### SQLite Database
-
-- Runs locally on the server
-- Handles all client-side queries for millisecond response times
-- Primary data source for the PumpFun event listener
-
-### MongoDB Database
-
-- Cloud-based persistent storage
-- Automatic backup every 5 minutes
-- Disaster recovery and data redundancy
-
-This architecture ensures fast user experience while maintaining data integrity and preventing loss of expensive-to-retrieve blockchain data.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Node.js 18+
-- MongoDB Atlas account
+- Node.js 22.16.0
 - Helius RPC access
+- Docker
 
 ### 1. Environment Setup
 
-Create a .env file using the provided example.env:
-
-```env
-MONGODB_URI=your_mongodb_connection_string
-HELIUS_RPC_URL=your_helius_rpc_endpoint
-HELIUS_KEY=your_helius_api_key
-```
+Create a .env file using the provided example.env
 
 Note: Free tier Helius works but may consume up to 500k credit units for full token indexing.
+
+### 2. Configure Database
+
+Create a docker postgres container:
+
+```bash
+docker pull postgres
+```
+
+Then create a container with:
+
+```bash
+docker run --name <container name here> -e POSTGRES_PASSWORD=<password here> -d -p 5432:5432 postgres
+```
+
+Now you can run:
+
+```bash
+npm run db:generate
+npm run db:migrate
+```
+
+But sometimes those commands do not work due to a known issue, in this case you can do the following:
+
+```bash
+docker exec -it <name of container> psql -U postgres -d <name of container>
+```
+
+Now you are in the shell and can past:
+
+```sql
+CREATE TABLE "tokens" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "bonding_curve_address" text NOT NULL,
+    "complete" boolean DEFAULT false NOT NULL,
+    "creator" text NOT NULL,
+    "token_address" text NOT NULL,
+    "name" text NOT NULL,
+    "symbol" text NOT NULL,
+    "uri" text,
+    "description" text,
+    "image" text,
+    "created_at" timestamp DEFAULT now() NOT NULL,
+    "updated_at" timestamp DEFAULT now() NOT NULL,
+    CONSTRAINT "tokens_bonding_curve_address_unique" UNIQUE("bonding_curve_address"),
+    CONSTRAINT "tokens_token_address_unique" UNIQUE("token_address")
+);
+
+# Create the indexes:
+CREATE INDEX "idx_tokens_bonding_curve" ON "tokens" USING btree ("bonding_curve_address");
+CREATE INDEX "idx_tokens_address" ON "tokens" USING btree ("token_address");
+CREATE INDEX "idx_tokens_symbol" ON "tokens" USING btree ("symbol");
+CREATE INDEX "idx_tokens_name" ON "tokens" USING btree ("name");
+CREATE INDEX "idx_tokens_complete" ON "tokens" USING btree ("complete");
+CREATE INDEX "idx_tokens_creator" ON "tokens" USING btree ("creator");
+CREATE INDEX "idx_tokens_created_at" ON "tokens" USING btree ("created_at");
+```
+
+Check to make sure the table is there by running:
+
+```sql
+SELECT * FROM tokens;
+```
+
+To exit run:
+
+```sql
+\q
+```
 
 ### 2. Install Dependencies
 
@@ -120,33 +160,10 @@ In a separate terminal, start the token creation monitor:
 npm run start:listener
 ```
 
-## 🔧 Database Management
-
-Manual Database Sync
-Navigate to `/src/lib/utils` and run the sync utility:
-
-```
-//Sync from SQLite to MongoDB
-await syncDatabases(toCloud: false)
-
-// Sync from MongoDB to SQLite
-await syncDatabases(toCloud: true)
-
-```
-
-### Database Status Commands
-
-- Check connection status
-- View record counts
-- Monitor sync intervals
-
 ## 🔮 Roadmap
 
 ### Planned Features
 
-- RPC-based token lookup for missing tokens
+- RPC-based token lookup for older pumpfun tokens
 - Enhanced Filtering
-- Advanced search by market cap, volume, etc.
-- Alert system for new token discoveries
-- Analytics Dashboard
 - Token performance metrics and trends

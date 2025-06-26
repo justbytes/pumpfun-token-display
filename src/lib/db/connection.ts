@@ -47,5 +47,5 @@ export async function testConnection() {
   }
 }
 
-// Test connection on import (optional)
-testConnection();
+// Test connection
+// testConnection();

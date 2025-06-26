@@ -27,6 +27,9 @@ interface PaginationInfo {
   endIndex: number;
 }
 
+/**
+ * React SPA that displays the pumpfun tokens coming from the postgresql database
+ */
 export default function Home() {
   // State management
   const [allTokens, setAllTokens] = useState<Token[]>([]);
@@ -40,8 +43,6 @@ export default function Home() {
   const [isPolling, setIsPolling] = useState(false);
   const [loadedBatches, setLoadedBatches] = useState<Set<number>>(new Set());
   const [totalTokenCount, setTotalTokenCount] = useState<number>(0);
-
-  // New refresh-related state
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null);
 
   // Refs for polling
@@ -65,19 +66,23 @@ export default function Home() {
       try {
         setPageLoading(true);
 
+        // get the batch offset
         const offset = (batchNumber - 1) * TOKENS_PER_BATCH;
         console.log(
           `🔄 Loading batch ${batchNumber} (tokens ${offset + 1}-${offset + TOKENS_PER_BATCH})`
         );
 
+        // NextJS api call to get tokens
         const response = await fetch(`/api/token-list?limit=${TOKENS_PER_BATCH}&offset=${offset}`);
 
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
 
+        // Response token data
         const data = await response.json();
 
+        // Add the tokens to the list
         if (data.success) {
           setAllTokens(prevTokens => {
             // Create a map of existing tokens by address for efficient lookup
@@ -114,6 +119,38 @@ export default function Home() {
     },
     [loadedBatches]
   );
+
+  // Load initial batch (first 500 tokens)
+  const loadInitialTokens = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const startTime = performance.now();
+
+      console.log(`🔄 Loading initial batch (first ${TOKENS_PER_BATCH} tokens)...`);
+
+      // Clear existing data
+      setAllTokens([]);
+      setLoadedBatches(new Set());
+      setCurrentPage(1);
+
+      // Load the first batch
+      await loadTokenBatch(1);
+
+      const endTime = performance.now();
+      const loadTime = Math.round(endTime - startTime);
+
+      setDataLoadTime(new Date());
+      setNewTokensCount(0);
+
+      console.log(`✅ Initial load completed in ${loadTime}ms`);
+    } catch (error) {
+      console.error('Error loading initial tokens:', error);
+      setError('Failed to load tokens. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadTokenBatch]);
 
   // Check if we need to load more tokens when user navigates to a page
   const ensureTokensLoaded = useCallback(
@@ -192,38 +229,6 @@ export default function Home() {
       }
     }, POLLING_INTERVAL);
   }, [pollForNewTokens]);
-
-  // Load initial batch (first 500 tokens)
-  const loadInitialTokens = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const startTime = performance.now();
-
-      console.log(`🔄 Loading initial batch (first ${TOKENS_PER_BATCH} tokens)...`);
-
-      // Clear existing data
-      setAllTokens([]);
-      setLoadedBatches(new Set());
-      setCurrentPage(1);
-
-      // Load the first batch
-      await loadTokenBatch(1);
-
-      const endTime = performance.now();
-      const loadTime = Math.round(endTime - startTime);
-
-      setDataLoadTime(new Date());
-      setNewTokensCount(0);
-
-      console.log(`✅ Initial load completed in ${loadTime}ms`);
-    } catch (error) {
-      console.error('Error loading initial tokens:', error);
-      setError('Failed to load tokens. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  }, [loadTokenBatch]);
 
   // Stop polling
   const stopPolling = useCallback(() => {
@@ -330,69 +335,6 @@ export default function Home() {
       endIndex: Math.min(currentPage * TOKENS_PER_PAGE, totalTokens),
     };
   }, [currentPage, filteredTokens.length, totalTokenCount, searchTerm]);
-
-  // Component lifecycle
-  useEffect(() => {
-    isComponentMountedRef.current = true;
-
-    const initializeApp = async () => {
-      await loadInitialTokens();
-      // Start polling after initial load completes
-      setTimeout(() => {
-        if (isComponentMountedRef.current) {
-          startPolling();
-        }
-      }, 1000); // Give it a second before starting polling
-    };
-
-    initializeApp();
-
-    return () => {
-      isComponentMountedRef.current = false;
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-      if (autoRefreshTimeoutRef.current) {
-        clearTimeout(autoRefreshTimeoutRef.current);
-        autoRefreshTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  // Reset to page 1 when search changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm]);
-
-  // Event handlers
-  const handlePrevPage = () => {
-    if (paginationInfo.hasPrevPage) {
-      handlePageChange(currentPage - 1);
-    }
-  };
-
-  const handleNextPage = () => {
-    if (paginationInfo.hasNextPage) {
-      handlePageChange(currentPage + 1);
-    }
-  };
-
-  const handlePageJump = (page: number) => {
-    if (page >= 1 && page <= paginationInfo.totalPages) {
-      handlePageChange(page);
-    }
-  };
-
-  const handleFirstPage = () => {
-    handlePageChange(1);
-  };
-
-  const handleRefresh = () => {
-    setSearchTerm('');
-    stopPolling();
-    refreshTokenList();
-  };
 
   // Rest of your component remains the same...
   const getDataInfo = () => {
@@ -519,6 +461,70 @@ export default function Home() {
     );
   };
 
+  // Event handlers
+  const handlePrevPage = () => {
+    if (paginationInfo.hasPrevPage) {
+      handlePageChange(currentPage - 1);
+    }
+  };
+
+  const handleNextPage = () => {
+    if (paginationInfo.hasNextPage) {
+      handlePageChange(currentPage + 1);
+    }
+  };
+
+  const handlePageJump = (page: number) => {
+    if (page >= 1 && page <= paginationInfo.totalPages) {
+      handlePageChange(page);
+    }
+  };
+
+  const handleFirstPage = () => {
+    handlePageChange(1);
+  };
+
+  const handleRefresh = () => {
+    setSearchTerm('');
+    stopPolling();
+    refreshTokenList();
+  };
+
+  // Component lifecycle
+  useEffect(() => {
+    isComponentMountedRef.current = true;
+
+    const initializeApp = async () => {
+      await loadInitialTokens();
+      // Start polling after initial load completes
+      setTimeout(() => {
+        if (isComponentMountedRef.current) {
+          startPolling();
+        }
+      }, 1000); // Give it a second before starting polling
+    };
+
+    initializeApp();
+
+    return () => {
+      isComponentMountedRef.current = false;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (autoRefreshTimeoutRef.current) {
+        clearTimeout(autoRefreshTimeoutRef.current);
+        autoRefreshTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  // Reset to page 1 when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  // Displays loading spinner with message
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -535,6 +541,7 @@ export default function Home() {
     );
   }
 
+  // Displays error message
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
@@ -557,6 +564,7 @@ export default function Home() {
     );
   }
 
+  // Displays tokens
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
